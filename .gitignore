@@ -1,2 +1,7 @@
-/target
+target/
 Cargo.lock
+dist/
+__pycache__/
+.pytest_cache/
+*.pyd
+*.so

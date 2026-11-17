@@ -13,11 +13,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --all-features
       - run: cargo test --no-default-features --lib
+      - run: cargo test --no-default-features --features verify --lib
   msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.70
+      # Dev-dependencies are newer than the MSRV; the library itself is not.
+      - run: sed -i '/^\[dev-dependencies\]/,/^$/d' Cargo.toml
       - run: cargo build --no-default-features
       - run: cargo build
   no-std:
@@ -28,7 +31,8 @@ jobs:
         with:
           targets: thumbv7em-none-eabihf, wasm32-unknown-unknown
       - run: cargo build --no-default-features --target thumbv7em-none-eabihf
-      - run: cargo build --no-default-features --features serde --target wasm32-unknown-unknown
+      - run: cargo build --no-default-features --features verify --target thumbv7em-none-eabihf
+      - run: cargo build --no-default-features --features serde,verify --target wasm32-unknown-unknown
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -37,7 +41,12 @@ jobs:
         with:
           components: clippy, rustfmt
       - run: cargo fmt --check
+      - run: cargo fmt --check --manifest-path python/Cargo.toml
+      - run: cargo fmt --check --manifest-path fuzz/Cargo.toml
       - run: cargo clippy --all-features --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features -- -D warnings
+      - run: cargo clippy --no-default-features --features verify -- -D warnings
+      - run: cargo clippy --manifest-path python/Cargo.toml -- -D warnings
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
@@ -48,3 +57,50 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash tools/c-reference/regenerate.sh
       - run: git diff --exit-code tests/data
+  spoof-corpus:
+    # Rebuilds tests/data/spoof from the spoofers' pinned source and fails if it drifts.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install scapy==2.6.1
+      - run: bash tools/spoof-corpus/regenerate.sh
+      - run: git diff --exit-code tests/data/spoof
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Fuzz each target for 60 s
+        working-directory: fuzz
+        run: |
+          for t in decode drip ridf trust; do
+            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=60
+          done
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: python
+          args: --release --out dist
+      - name: Install the wheel and run the tests
+        shell: bash
+        run: |
+          python -m pip install -q pytest
+          python -m pip install -q python/dist/*.whl
+          cd python/tests && python -m pytest -q .

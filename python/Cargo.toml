@@ -1,0 +1,17 @@
+[package]
+name = "remoteid-python"
+version = "0.2.0"
+edition = "2021"
+publish = false
+description = "Python bindings for the remoteid crate"
+license = "MIT"
+
+[lib]
+name = "_remoteid"
+crate-type = ["cdylib"]
+
+[dependencies]
+remoteid = { path = "..", features = ["std", "verify"] }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }
+
+[workspace]

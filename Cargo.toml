@@ -1,18 +1,18 @@
 [package]
 name = "remoteid"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Matt Busel <matt@busel.dev>"]
 edition = "2021"
 rust-version = "1.70"
-description = "Pure Rust, no_std decoder and encoder for drone Remote ID (ASTM F3411-22a, ASD-STAN EN 4709-002, Open Drone ID) over Bluetooth and Wi-Fi, with a per-aircraft tracker"
+description = "Drone Remote ID (ASTM F3411-22a, EN 4709-002) in pure no_std Rust: decode, encode, track, and judge trust (spoof and plausibility verdicts, DRIP RFC 9575 Ed25519 verification)"
 license = "MIT"
 repository = "https://github.com/Mattbusel/remoteid"
 homepage = "https://github.com/Mattbusel/remoteid"
 documentation = "https://docs.rs/remoteid"
 readme = "README.md"
-keywords = ["remote-id", "drone", "uas", "opendroneid", "astm-f3411"]
+keywords = ["remote-id", "drone", "uas", "drip", "spoofing"]
 categories = ["aerospace::drones", "aerospace::protocols", "no-std", "parser-implementations", "encoding"]
-exclude = ["tests/data/*.pcap", "tests/data/*.pcapng", "tests/data/*.jsonl", ".github"]
+exclude = ["tests/data", ".github", "python", "fuzz", "tools"]
 
 [features]
 default = ["std"]
@@ -20,12 +20,18 @@ default = ["std"]
 std = []
 ## Derives `serde::Serialize` and `serde::Deserialize` on the decoded types.
 serde = ["dep:serde"]
+## DRIP (RFC 9374 / RFC 9575) signature checks with Ed25519 and cSHAKE128: the `auth` module.
+verify = ["dep:ed25519-dalek", "dep:sha3"]
 
 [dependencies]
 serde = { version = "1", default-features = false, features = ["derive"], optional = true }
+ed25519-dalek = { version = "2.1", default-features = false, optional = true }
+sha3 = { version = "0.10.8", default-features = false, optional = true }
 
 [dev-dependencies]
 serde_json = "1"
+ed25519-dalek = { version = "2.1", default-features = false, features = ["fast", "zeroize"] }
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]
 all-features = true

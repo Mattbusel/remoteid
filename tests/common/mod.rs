@@ -101,3 +101,153 @@ pub fn unhex(s: &str) -> Vec<u8> {
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
         .collect()
 }
+
+/// Like [`read_pcap`] / [`read_pcapng`] but with packet timestamps in
+/// microseconds since the Unix epoch.
+pub fn read_capture(name: &str) -> Vec<(u32, u64, Vec<u8>)> {
+    let b = std::fs::read(resolve(name)).unwrap();
+    let mut out = Vec::new();
+    if b[..4] == [0xd4, 0xc3, 0xb2, 0xa1] {
+        let lt = u32::from_le_bytes(b[20..24].try_into().unwrap());
+        let mut off = 24;
+        while off + 16 <= b.len() {
+            let s = u32::from_le_bytes(b[off..off + 4].try_into().unwrap()) as u64;
+            let us = u32::from_le_bytes(b[off + 4..off + 8].try_into().unwrap()) as u64;
+            let cl = u32::from_le_bytes(b[off + 8..off + 12].try_into().unwrap()) as usize;
+            off += 16;
+            out.push((lt, s * 1_000_000 + us, b[off..off + cl].to_vec()));
+            off += cl;
+        }
+    } else {
+        let mut off = 0;
+        let mut linktypes = Vec::new();
+        while off + 12 <= b.len() {
+            let bt = u32::from_le_bytes(b[off..off + 4].try_into().unwrap());
+            let bl = u32::from_le_bytes(b[off + 4..off + 8].try_into().unwrap()) as usize;
+            let body = &b[off + 8..off + bl - 4];
+            match bt {
+                1 => linktypes.push(u16::from_le_bytes(body[..2].try_into().unwrap()) as u32),
+                6 => {
+                    let iface = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+                    let hi = u32::from_le_bytes(body[4..8].try_into().unwrap()) as u64;
+                    let lo = u32::from_le_bytes(body[8..12].try_into().unwrap()) as u64;
+                    let cl = u32::from_le_bytes(body[12..16].try_into().unwrap()) as usize;
+                    out.push((
+                        linktypes[iface],
+                        (hi << 32) | lo,
+                        body[20..20 + cl].to_vec(),
+                    ));
+                }
+                _ => {}
+            }
+            off += bl;
+        }
+    }
+    out
+}
+
+/// AdvA and AdvData of a LINKTYPE_BLUETOOTH_LE_LL (251) legacy advertising PDU.
+pub fn ble_ll_adv(pkt: &[u8]) -> Option<([u8; 6], Vec<u8>)> {
+    let pdu = pkt.get(4..)?;
+    let pdu_type = pdu.first()? & 0x0F;
+    let len = *pdu.get(1)? as usize;
+    let body = pdu.get(2..2 + len)?;
+    match pdu_type {
+        0 | 2 | 6 => Some((body[..6].try_into().ok()?, body[6..].to_vec())),
+        _ => None,
+    }
+}
+
+/// One Remote ID frame out of a capture, ready for the tracker.
+pub struct RidFrame {
+    pub time_us: u64,
+    pub transmitter: remoteid::Transmitter,
+    pub transport: remoteid::Transport,
+    pub counter: u8,
+    pub payload: Vec<u8>,
+    pub beacon: Option<remoteid::wifi::BeaconInfo>,
+}
+
+/// Every Remote ID frame of a capture (Wi-Fi radiotap or bare 802.11,
+/// Nordic BLE sniffer, or BLE link layer), in capture order.
+pub fn rid_frames(name: &str) -> Vec<RidFrame> {
+    use remoteid::{ble, wifi, Transmitter, Transport};
+    let mut out = Vec::new();
+    for (lt, t, pkt) in read_capture(name) {
+        let ble_frame = |addr: [u8; 6], adv: &[u8]| {
+            ble::find_in_advertising_data(adv).map(|rid| RidFrame {
+                time_us: t,
+                transmitter: Transmitter::Ble(addr),
+                transport: if rid.payload.first().is_some_and(|b| b >> 4 == 0xF) {
+                    Transport::Bluetooth5
+                } else {
+                    Transport::Bluetooth4
+                },
+                counter: rid.counter,
+                payload: rid.payload.to_vec(),
+                beacon: None,
+            })
+        };
+        let f = match lt {
+            105 | 127 => {
+                let frame = if lt == 127 {
+                    match wifi::strip_radiotap(&pkt) {
+                        Ok(f) => f,
+                        Err(_) => continue,
+                    }
+                } else {
+                    &pkt[..]
+                };
+                match wifi::parse_frame(frame) {
+                    Ok(rid) => Some(RidFrame {
+                        time_us: t,
+                        transmitter: Transmitter::Wifi(rid.source),
+                        transport: match rid.kind {
+                            wifi::WifiKind::Beacon => Transport::WifiBeacon,
+                            wifi::WifiKind::Nan => Transport::WifiNan,
+                        },
+                        counter: rid.counter,
+                        payload: rid.payload.to_vec(),
+                        beacon: wifi::beacon_info(frame),
+                    }),
+                    Err(_) => None,
+                }
+            }
+            251 => ble_ll_adv(&pkt).and_then(|(a, adv)| ble_frame(a, &adv)),
+            272 => match nordic_ble_adv(&pkt) {
+                Some((a, adv, true)) => ble_frame(a, &adv),
+                _ => None,
+            },
+            _ => None,
+        };
+        out.extend(f);
+    }
+    out
+}
+
+/// Feeds a capture through a tracker, with the capture clock as both the
+/// monotonic and the UTC receiver clock.
+pub fn track(name: &str, utc: bool) -> remoteid::Tracker {
+    track_with(name, utc, remoteid::TrustConfig::default())
+}
+
+/// [`track`] with trust settings.
+pub fn track_with(name: &str, utc: bool, trust: remoteid::TrustConfig) -> remoteid::Tracker {
+    let mut tracker = remoteid::Tracker::new(remoteid::TrackerConfig {
+        timeout: u64::MAX,
+        trust,
+        ..remoteid::TrackerConfig::default()
+    });
+    for f in rid_frames(name) {
+        let ms = f.time_us / 1000;
+        let mut obs = remoteid::Observation::new(f.transport, Some(f.counter), &f.payload, ms);
+        if utc {
+            obs = obs.with_unix_ms(ms);
+        }
+        if let Some(b) = f.beacon {
+            obs = obs.with_beacon(b);
+        }
+        tracker.observe(f.transmitter, &obs);
+    }
+    tracker
+}

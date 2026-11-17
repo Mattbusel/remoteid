@@ -1,0 +1,42 @@
+[package]
+name = "remoteid-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+remoteid = { path = "..", features = ["std", "verify"] }
+
+[workspace]
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "drip"
+path = "fuzz_targets/drip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ridf"
+path = "fuzz_targets/ridf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trust"
+path = "fuzz_targets/trust.rs"
+test = false
+doc = false
+bench = false

@@ -3,6 +3,7 @@
 ```text
 cargo test --all-features
 cargo test --no-default-features --lib
+cargo test --no-default-features --features verify --lib
 cargo build --no-default-features --target thumbv7em-none-eabihf
 cargo build --no-default-features --target wasm32-unknown-unknown
 ```
@@ -38,3 +39,39 @@ files, so a change in either library shows up.
 match the C value (floats to the printed precision), and every pack to be
 accepted or rejected the same way, with the same number of stored messages
 per type.
+
+## Trust, DRIP, RIDF and aircraft.json
+
+| Test | What |
+|---|---|
+| `tests/trust_corpus.rs` | verdicts on the legitimate sample captures and on the spoof corpus, with and without a UTC clock and with fingerprints off (`docs/trust.md` has the table) |
+| `tests/drip.rs` | the RFC 9575 Appendix B.2.1 vectors, a Bluetooth 4 stream of them through the tracker, signed chains made with `DripSigner`, tampering, replay, FEC recovery |
+| `tests/properties.rs` | proptest: every parser and the trust engine on arbitrary bytes, FEC rebuilding any single lost page, RIDF round trips, geometry |
+| `tests/aircraft_json.rs` | the JSON parses and follows the readsb schema; operator position redacted by default |
+| `python/tests` | the wheel: decode, verdicts on the same corpora, RIDF, aircraft.json, the RFC example over Bluetooth 4 |
+
+The spoof corpus is regenerated from the spoofers' pinned source by
+`tools/spoof-corpus/regenerate.sh` (Linux or WSL, needs python3 with
+scapy 2.6.1, gcc and g++); CI fails if it changes. See
+`docs/spoof-corpus.md`.
+
+## Fuzzing
+
+```text
+cd fuzz
+cargo +nightly fuzz run decode
+cargo +nightly fuzz run drip
+cargo +nightly fuzz run ridf
+cargo +nightly fuzz run trust
+```
+
+CI runs each target for 60 seconds on every push.
+
+## Python
+
+```text
+cd python
+pip install maturin pytest
+maturin develop --release
+pytest tests
+```

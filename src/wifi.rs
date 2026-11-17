@@ -95,6 +95,80 @@ pub fn find_in_elements(ies: &[u8]) -> Option<WifiRemoteId<'_>> {
     })
 }
 
+/// Fixed fields and SSID of an 802.11 Beacon or probe response, used by
+/// the trust checks (the timing synchronization function and capability
+/// fields differ between real transmitters and software injectors).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BeaconInfo {
+    /// Transmitter address.
+    pub source: [u8; 6],
+    /// 802.11 sequence number (12 bits).
+    pub sequence: u16,
+    /// TSF timestamp in microseconds.
+    pub tsf: u64,
+    /// Beacon interval in time units (1024 microseconds).
+    pub interval_tu: u16,
+    /// Capability information field.
+    pub capability: u16,
+    /// SSID bytes (first `ssid_len` are valid).
+    pub ssid: [u8; 32],
+    /// SSID length (0 to 32).
+    pub ssid_len: u8,
+}
+
+impl BeaconInfo {
+    /// The SSID bytes.
+    pub fn ssid(&self) -> &[u8] {
+        &self.ssid[..self.ssid_len as usize]
+    }
+}
+
+/// Reads the [`BeaconInfo`] of a Beacon (subtype 8) or probe response
+/// (subtype 5) management frame (no radiotap header). `None` for other
+/// frames.
+pub fn beacon_info(frame: &[u8]) -> Option<BeaconInfo> {
+    let fc = *frame.first()?;
+    if (fc >> 2) & 0x03 != 0 || !matches!(fc >> 4, 8 | 5) || frame.len() < 36 {
+        return None;
+    }
+    let mut info = BeaconInfo {
+        source: frame[10..16].try_into().ok()?,
+        sequence: u16::from_le_bytes([frame[22], frame[23]]) >> 4,
+        tsf: u64::from_le_bytes(frame[24..32].try_into().ok()?),
+        interval_tu: u16::from_le_bytes([frame[32], frame[33]]),
+        capability: u16::from_le_bytes([frame[34], frame[35]]),
+        ssid: [0; 32],
+        ssid_len: 0,
+    };
+    if let Some((_, ssid)) = elements(&frame[36..]).find(|(id, _)| *id == 0) {
+        let n = ssid.len().min(32);
+        info.ssid[..n].copy_from_slice(&ssid[..n]);
+        info.ssid_len = n as u8;
+    }
+    Some(info)
+}
+
+/// Parses the body of a Remote ID vendor element as Python `scapy` hands it
+/// over in `Dot11Elt.info`: OUI `FA:0B:BC`, OUI type `0x0D`, counter, pack.
+pub fn parse_vendor_element(info: &[u8]) -> Result<WifiRemoteId<'_>, Error> {
+    if info.len() < 6 {
+        return Err(Error::TooShort {
+            need: 6,
+            got: info.len(),
+        });
+    }
+    if info[..3] != ASD_STAN_OUI || info[3] != ASD_STAN_OUI_TYPE {
+        return Err(Error::NotRemoteId);
+    }
+    Ok(WifiRemoteId {
+        kind: WifiKind::Beacon,
+        source: [0; 6],
+        counter: info[4],
+        payload: &info[5..],
+    })
+}
+
 /// Parses a raw 802.11 management frame (no radiotap header) and returns
 /// its Remote ID payload, from either a Beacon / probe response element or
 /// a NAN service discovery frame.
