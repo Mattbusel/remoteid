@@ -1,0 +1,31 @@
+[package]
+name = "remoteid"
+version = "0.1.0"
+authors = ["Matt Busel <matt@busel.dev>"]
+edition = "2021"
+rust-version = "1.70"
+description = "Pure Rust, no_std decoder and encoder for drone Remote ID (ASTM F3411-22a, ASD-STAN EN 4709-002, Open Drone ID) over Bluetooth and Wi-Fi, with a per-aircraft tracker"
+license = "MIT"
+repository = "https://github.com/Mattbusel/remoteid"
+homepage = "https://github.com/Mattbusel/remoteid"
+documentation = "https://docs.rs/remoteid"
+readme = "README.md"
+keywords = ["remote-id", "drone", "uas", "opendroneid", "astm-f3411"]
+categories = ["aerospace::drones", "aerospace::protocols", "no-std", "parser-implementations", "encoding"]
+exclude = ["tests/data/*.pcap", "tests/data/*.pcapng", "tests/data/*.jsonl", ".github"]
+
+[features]
+default = ["std"]
+## Enables the `Tracker` (per-aircraft state with expiry) and `std::error::Error` for `Error`.
+std = []
+## Derives `serde::Serialize` and `serde::Deserialize` on the decoded types.
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+
+[package.metadata.docs.rs]
+all-features = true
