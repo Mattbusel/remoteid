@@ -285,10 +285,19 @@ impl<'a> Record<'a> {
     }
 
     /// An [`Observation`] for the trust engine. The receiver time becomes
-    /// `now_ms`; with `utc` it also sets the receiver UTC clock.
+    /// `now_ms`; with `utc` it also sets the receiver UTC clock. The
+    /// receiver id is passed on, so signal and TSF continuity are judged per
+    /// receiver.
+    ///
+    /// Feed records from several receivers into one [`crate::Tracker`] only
+    /// when their `rx_time_ns` is one shared clock (`utc` set on all of
+    /// them): the timing and kinematic checks compare receiver times, and
+    /// two monotonic clocks cannot be compared. Otherwise use one tracker per
+    /// receiver. No check compares receivers with each other yet.
     pub fn observation(&self) -> Observation<'a> {
         let ms = self.rx_time_ns / 1_000_000;
-        let mut o = Observation::new(self.transport, self.counter, self.payload, ms);
+        let mut o = Observation::new(self.transport, self.counter, self.payload, ms)
+            .with_receiver(self.receiver_id);
         if self.utc {
             o = o.with_unix_ms(ms);
         }

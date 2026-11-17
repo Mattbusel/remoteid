@@ -204,7 +204,11 @@ impl KeyStore for MemoryKeyStore {
 /// What a verifier may use besides the authentication message itself.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AuthContext<'a> {
-    /// DETs this aircraft broadcasts in its Basic ID messages.
+    /// DETs this aircraft broadcasts in its Basic ID messages. Wrappers,
+    /// Manifests and Frames verify only when their signer is one of them;
+    /// with none (no DET Basic ID heard yet) they are
+    /// [`AuthResult::Unverifiable`], because a signature by some other DET
+    /// says nothing about this aircraft.
     pub uas_dets: &'a [Det],
     /// Recently received single messages (header byte first, no counter).
     pub recent_messages: &'a [[u8; MESSAGE_SIZE]],
@@ -315,7 +319,10 @@ impl DripEd25519 {
         if ev.det.suite_id() != SUITE_EDDSA_CSHAKE128 {
             return Err(AuthResult::Unsupported);
         }
-        if !ctx.uas_dets.is_empty() && !ctx.uas_dets.contains(&ev.det) {
+        if ctx.uas_dets.is_empty() {
+            return Err(AuthResult::Unverifiable);
+        }
+        if !ctx.uas_dets.contains(&ev.det) {
             return Err(AuthResult::Invalid(InvalidReason::SignerNotUas));
         }
         let key = keys.key(&ev.det).ok_or(AuthResult::Unverifiable)?;

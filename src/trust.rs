@@ -348,6 +348,19 @@ pub struct TrustConfig {
     pub auth_fresh_ms: u64,
     /// Clock skew allowed around DRIP VNB / VNA, seconds (default 120).
     pub auth_skew_s: u32,
+    /// Grant [`Verdict::Authenticated`] only for signatures checked against
+    /// their VNB / VNA window with a receiver UTC clock
+    /// ([`Observation::unix_ms`]). Default `true`: without a clock a valid
+    /// signature recorded earlier and replayed elsewhere cannot be told from
+    /// a live one. The auth state still says `verified` or `trusted`.
+    pub auth_requires_clock: bool,
+    /// Number of different moderate reasons that make a transmitter
+    /// [`Verdict::Spoofed`] with no strong reason. Default `None`: moderate
+    /// evidence alone caps at [`Verdict::Suspicious`], because the
+    /// kinematic and clock checks have not been measured on enough real
+    /// flights to call an aircraft fake on them alone. `Some(3)` was the
+    /// 0.2.0 behaviour.
+    pub moderate_spoofed: Option<u8>,
     /// Evaluations needed before a ratio-based reason can fire (default 3).
     pub min_evaluations: u16,
     /// Match fingerprints of known spoofing tools (default `true`). Turn
@@ -367,6 +380,8 @@ impl Default for TrustConfig {
             accept_self_certified: false,
             auth_fresh_ms: 30_000,
             auth_skew_s: 120,
+            auth_requires_clock: true,
+            moderate_spoofed: None,
             min_evaluations: 3,
             fingerprints: true,
         }
@@ -392,6 +407,11 @@ pub struct Observation<'a> {
     pub rssi_dbm: Option<i8>,
     /// Wi-Fi Beacon header fields (from [`crate::wifi::beacon_info`]).
     pub beacon: Option<BeaconInfo>,
+    /// Which receiver heard the frame (RIDF `receiver_id`; 0 for a single
+    /// receiver). Signal strength and Wi-Fi TSF continuity are tracked per
+    /// receiver, since a near and a far receiver hear the same frame at
+    /// very different levels.
+    pub receiver_id: u16,
 }
 
 impl<'a> Observation<'a> {
@@ -405,6 +425,7 @@ impl<'a> Observation<'a> {
             unix_ms: None,
             rssi_dbm: None,
             beacon: None,
+            receiver_id: 0,
         }
     }
 
@@ -425,14 +446,55 @@ impl<'a> Observation<'a> {
         self.beacon = Some(beacon);
         self
     }
+
+    /// Sets the receiver that heard the frame.
+    pub fn with_receiver(mut self, receiver_id: u16) -> Self {
+        self.receiver_id = receiver_id;
+        self
+    }
 }
 
+/// Number of time buckets per [`TrustConfig::memory_ms`] window.
+const BUCKETS: usize = 4;
+
+/// Hits and evaluations of one rule, counted over a sliding window of
+/// `memory_ms` (four buckets of a quarter each) and over the lifetime.
 #[derive(Debug, Clone, Copy, Default)]
 struct Tally {
-    hits: u16,
-    evals: u16,
+    total: u16,
     last_hit_ms: u64,
+    /// (bucket number, hits, evaluations).
+    buckets: [(u32, u16, u16); BUCKETS],
 }
+
+impl Tally {
+    fn record(&mut self, hit: bool, now: u64, bucket_ms: u64) {
+        let epoch = (now / bucket_ms) as u32;
+        let b = &mut self.buckets[epoch as usize % BUCKETS];
+        if b.0 != epoch {
+            *b = (epoch, 0, 0);
+        }
+        b.2 = b.2.saturating_add(1);
+        if hit {
+            b.1 = b.1.saturating_add(1);
+            self.total = self.total.saturating_add(1);
+            self.last_hit_ms = now;
+        }
+    }
+
+    /// (hits, evaluations) in the window ending at `now`.
+    fn window(&self, now: u64, bucket_ms: u64) -> (u32, u32) {
+        let epoch = (now / bucket_ms) as u32;
+        self.buckets
+            .iter()
+            .filter(|b| (b.1 > 0 || b.2 > 0) && epoch.wrapping_sub(b.0) < BUCKETS as u32)
+            .fold((0, 0), |(h, e), b| (h + b.1 as u32, e + b.2 as u32))
+    }
+}
+
+/// Tally slot (after the reasons) for single position outliers: one fix
+/// far off the track that the next fix returns from.
+const OUTLIER: usize = Reason::COUNT;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Fix {
@@ -453,6 +515,22 @@ const RECENT: usize = 16;
 #[cfg(feature = "verify")]
 const HASHES: usize = 48;
 const COUNTER_SLOTS: usize = 8;
+/// Receivers with their own signal and TSF continuity per transmitter.
+const RECEIVERS: usize = 4;
+
+/// The slot for `id` in a per-receiver table: its own, else a free one,
+/// else the stalest.
+fn receiver_slot<T: Copy>(table: &[Option<(u16, T, u64)>; RECEIVERS], id: u16) -> usize {
+    if let Some(i) = table.iter().position(|e| e.is_some_and(|e| e.0 == id)) {
+        return i;
+    }
+    if let Some(i) = table.iter().position(Option::is_none) {
+        return i;
+    }
+    (0..RECEIVERS)
+        .min_by_key(|&i| table[i].map_or(0, |e| e.2))
+        .unwrap_or(0)
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 struct AuthTally {
@@ -464,11 +542,19 @@ struct AuthTally {
     invalid: u32,
     verified_ms: Option<u64>,
     trusted_ms: Option<u64>,
+    /// As above, for signatures checked inside VNB / VNA against a receiver
+    /// UTC clock.
+    verified_clocked_ms: Option<u64>,
+    trusted_clocked_ms: Option<u64>,
     any_verified: bool,
     any_trusted: bool,
+    /// Signer of the latest verified signature (always one of the DETs the
+    /// aircraft broadcasts).
+    det: Option<Det>,
 }
 
-/// Per-transmitter trust evidence. No allocation; about 4 KB.
+/// Per-transmitter trust evidence. No allocation. Measured with
+/// `size_of` on x86_64: 7256 bytes with the `verify` feature, 6768 without.
 #[derive(Debug, Clone)]
 pub struct TrustState {
     data: UasData,
@@ -476,16 +562,23 @@ pub struct TrustState {
     decode_errors: u64,
     first_ms: Option<u64>,
     last_ms: u64,
-    tallies: [Tally; Reason::COUNT],
+    tallies: [Tally; Reason::COUNT + 1],
+    bucket_ms: u64,
     spoofer: Option<Spoofer>,
     fixes: [Fix; FIXES],
     nfix: usize,
+    /// The fix before a jump, while the fix after it is on probation.
+    jump_from: Option<Fix>,
+    /// A non zero Location timestamp has been seen.
+    ts_nonzero: bool,
     last_window_ms: Option<u64>,
     locations: u32,
     counters: [[Option<(u8, u32, u64)>; COUNTER_SLOTS]; 6],
-    tsf: Option<(u64, u64)>,
+    /// (receiver, TSF, receiver time) per receiver.
+    tsf: [Option<(u16, u64, u64)>; RECEIVERS],
     beacon: Option<BeaconInfo>,
-    last_rssi: Option<(i8, u64)>,
+    /// (receiver, RSSI, receiver time) per receiver.
+    last_rssi: [Option<(u16, i8, u64)>; RECEIVERS],
     system_ts_zero: bool,
     transports: u8,
     recent: [[u8; MESSAGE_SIZE]; RECENT],
@@ -509,16 +602,19 @@ impl Default for TrustState {
             decode_errors: 0,
             first_ms: None,
             last_ms: 0,
-            tallies: [Tally::default(); Reason::COUNT],
+            tallies: [Tally::default(); Reason::COUNT + 1],
+            bucket_ms: TrustConfig::default().memory_ms / BUCKETS as u64,
             spoofer: None,
             fixes: [Fix::default(); FIXES],
             nfix: 0,
+            jump_from: None,
+            ts_nonzero: false,
             last_window_ms: None,
             locations: 0,
             counters: [[None; COUNTER_SLOTS]; 6],
-            tsf: None,
+            tsf: [None; RECEIVERS],
             beacon: None,
-            last_rssi: None,
+            last_rssi: [None; RECEIVERS],
             system_ts_zero: false,
             transports: 0,
             recent: [[0; MESSAGE_SIZE]; RECENT],
@@ -615,70 +711,80 @@ impl TrustState {
     }
 
     fn hit(&mut self, r: Reason, now: u64) {
-        let t = &mut self.tallies[r as usize];
-        t.hits = t.hits.saturating_add(1);
-        t.evals = t.evals.saturating_add(1);
-        t.last_hit_ms = now;
+        self.eval(r, true, now);
     }
 
     fn eval(&mut self, r: Reason, hit: bool, now: u64) {
-        if hit {
-            self.hit(r, now);
-        } else {
-            let t = &mut self.tallies[r as usize];
-            t.evals = t.evals.saturating_add(1);
-        }
+        let bucket_ms = self.bucket_ms;
+        self.tallies[r as usize].record(hit, now, bucket_ms);
     }
 
     fn active(&self, r: Reason, cfg: &TrustConfig, now: u64) -> bool {
         let t = &self.tallies[r as usize];
-        if t.hits == 0 {
+        if r == Reason::Teleport {
+            // A jump that persisted counts 2, a single fix off the track
+            // that the next fix came back from counts 1, over the last
+            // `memory_ms`. One GPS glitch (1) or one jump (2) is not enough.
+            let (jumps, _) = t.window(now, self.bucket_ms);
+            let (outliers, _) = self.tallies[OUTLIER].window(now, self.bucket_ms);
+            return 2 * jumps + outliers >= 3;
+        }
+        if t.total == 0 {
             return false;
         }
-        if r != Reason::KnownSpoofer && now.saturating_sub(t.last_hit_ms) > cfg.memory_ms {
+        if r == Reason::KnownSpoofer {
+            // Fingerprints never expire.
+            return true;
+        }
+        if now.saturating_sub(t.last_hit_ms) > cfg.memory_ms {
             return false;
         }
-        let ratio =
-            |t: &Tally| t.hits >= cfg.min_evaluations && (t.hits as u32) * 2 >= t.evals as u32;
+        // Counts and ratios over the last `memory_ms`, not the lifetime:
+        // isolated events far apart never add up.
+        let (hits, evals) = t.window(now, self.bucket_ms);
+        let ratio = hits >= cfg.min_evaluations as u32 && hits * 2 >= evals;
         match r {
             Reason::KnownSpoofer | Reason::AuthFailed | Reason::TsfWallClock => true,
             Reason::SerialFormat | Reason::NoBasicId | Reason::AuthExpired => true,
-            Reason::Teleport | Reason::IdentityClone | Reason::TransportDisagreement => t.hits >= 2,
-            Reason::SystemClockDrift | Reason::SharedRadio => t.hits >= 2,
+            Reason::Teleport => unreachable!("handled above"),
+            Reason::IdentityClone | Reason::TransportDisagreement => hits >= 2,
+            Reason::SystemClockDrift | Reason::SharedRadio => hits >= 2,
             Reason::CounterConflict
             | Reason::TsfDiscontinuity
             | Reason::CounterInterleave
             | Reason::SignalJump
             | Reason::InvalidFields
-            | Reason::TimestampFrozen => t.hits >= 3,
+            | Reason::TimestampFrozen => hits >= 3,
             Reason::SpeedImplausible
             | Reason::ReportedSpeedMismatch
             | Reason::ReportedCourseMismatch
             | Reason::VerticalRateImplausible
-            | Reason::LocationClockDrift => ratio(t),
+            | Reason::LocationClockDrift => ratio,
         }
     }
 
     /// Processes one frame and returns the updated assessment.
     pub fn observe(&mut self, cfg: &TrustConfig, obs: &Observation<'_>) -> Assessment {
         let now = obs.now_ms;
+        self.bucket_ms = (cfg.memory_ms / BUCKETS as u64).max(1);
         self.frames += 1;
         self.first_ms.get_or_insert(now);
         self.last_ms = self.last_ms.max(now);
         self.transports |= 1 << obs.transport.code();
 
         if let Some(rssi) = obs.rssi_dbm {
-            if let Some((prev, t)) = self.last_rssi {
-                if now.saturating_sub(t) <= 500 {
+            let i = receiver_slot(&self.last_rssi, obs.receiver_id);
+            if let Some((id, prev, t)) = self.last_rssi[i] {
+                if id == obs.receiver_id && now.saturating_sub(t) <= 500 {
                     let jump = (rssi as i16 - prev as i16).abs() >= 25;
                     self.eval(Reason::SignalJump, jump, now);
                 }
             }
-            self.last_rssi = Some((rssi, now));
+            self.last_rssi[i] = Some((obs.receiver_id, rssi, now));
         }
 
         if let Some(b) = obs.beacon {
-            self.check_beacon(&b, obs.unix_ms, now);
+            self.check_beacon(&b, obs.unix_ms, obs.receiver_id, now);
             self.beacon = Some(b);
         }
 
@@ -849,7 +955,7 @@ impl TrustState {
         }
     }
 
-    fn check_beacon(&mut self, b: &BeaconInfo, unix_ms: Option<u64>, now: u64) {
+    fn check_beacon(&mut self, b: &BeaconInfo, unix_ms: Option<u64>, receiver: u16, now: u64) {
         // 1e15 us is 31.7 years of uptime: only a wall clock gets there.
         let wall = match unix_ms {
             Some(u) => {
@@ -860,15 +966,16 @@ impl TrustState {
         if wall {
             self.hit(Reason::TsfWallClock, now);
         }
-        if let Some((prev_tsf, prev_now)) = self.tsf {
-            if b.tsf != 0 && prev_tsf != 0 {
+        let i = receiver_slot(&self.tsf, receiver);
+        if let Some((id, prev_tsf, prev_now)) = self.tsf[i] {
+            if id == receiver && b.tsf != 0 && prev_tsf != 0 {
                 let drx = now.saturating_sub(prev_now) as f64;
                 let dtsf = (b.tsf as f64 - prev_tsf as f64) / 1000.0;
                 let jump = dtsf < 0.0 || (dtsf - drx).fabs() > 500.0 + 0.05 * drx;
                 self.eval(Reason::TsfDiscontinuity, jump, now);
             }
         }
-        self.tsf = Some((b.tsf, now));
+        self.tsf[i] = Some((receiver, b.tsf, now));
     }
 
     fn on_location(&mut self, cfg: &TrustConfig, l: &Location, unix_ms: Option<u64>, now: u64) {
@@ -896,9 +1003,13 @@ impl TrustState {
             vacc: acc(l.vertical_accuracy.meters()),
             // Raw 0 (0.0 s past the hour) is what transmitters that never fill
             // the field send, the Open Drone ID sample units included, so it
-            // counts as "not provided" rather than as a frozen clock.
-            ts: l.timestamp.filter(|t| *t != 0.0),
+            // counts as "not provided" rather than as a frozen clock, until
+            // the transmitter has sent a non zero one.
+            ts: l.timestamp.filter(|t| *t != 0.0 || self.ts_nonzero),
         };
+        if fix.ts.is_some_and(|t| t != 0.0) {
+            self.ts_nonzero = true;
+        }
 
         if let (Some(ts), Some(unix_ms)) = (fix.ts, unix_ms) {
             let rx = (unix_ms % 3_600_000) as f64 / 1000.0;
@@ -910,17 +1021,41 @@ impl TrustState {
             );
         }
 
+        let reachable = |from: &Fix| {
+            let dt = now.saturating_sub(from.t) as f64 / 1000.0;
+            let d = geo::distance_m(from.lat, from.lon, lat, lon);
+            d <= 50.0 || d <= from.hacc + fix.hacc + cfg.max_speed_mps * dt
+        };
+        // The previous fix jumped away from `jump_from`: if this one is back
+        // near the track, the jump was one bad fix (a GNSS outlier); drop it.
+        // If not, the jump stuck.
+        let mut stuck = false;
+        if let Some(before) = self.jump_from.take() {
+            if reachable(&before) {
+                self.nfix -= 1;
+                let bucket_ms = self.bucket_ms;
+                self.tallies[OUTLIER].record(true, now, bucket_ms);
+            } else {
+                self.hit(Reason::Teleport, now);
+                stuck = true;
+            }
+        }
+        let mut jumped = false;
         if self.nfix > 0 {
             let prev = self.fixes[(self.nfix - 1) % FIXES];
-            let dt = now.saturating_sub(prev.t);
-            if dt >= 50 {
-                let d = geo::distance_m(prev.lat, prev.lon, lat, lon);
-                let allowed = prev.hacc + fix.hacc + cfg.max_speed_mps * dt as f64 / 1000.0;
-                self.eval(Reason::Teleport, d > allowed && d > 50.0, now);
+            if now.saturating_sub(prev.t) >= 50 && !reachable(&prev) {
+                // Judged when the next fix arrives.
+                self.jump_from = Some(prev);
+                jumped = true;
             }
         }
         self.fixes[self.nfix % FIXES] = fix;
         self.nfix += 1;
+        if jumped && !stuck {
+            // No window statistics across a fix that may be a single outlier
+            // on an otherwise steady track.
+            return;
+        }
 
         if self
             .last_window_ms
@@ -1079,7 +1214,7 @@ impl TrustState {
             self.spoofer = Some(Spoofer::RemoteIdSpoofer);
             self.hit(Reason::KnownSpoofer, now);
         }
-        if serial_bad && self.tallies[Reason::SerialFormat as usize].hits == 0 {
+        if serial_bad {
             self.hit(Reason::SerialFormat, now);
         }
         if !has_basic
@@ -1113,11 +1248,22 @@ impl TrustState {
             AuthResult::Unverifiable => self.auth.unverifiable += 1,
             AuthResult::Valid {
                 kind,
+                signer,
                 trusted,
                 content_validated,
                 fresh,
-                ..
             } => {
+                // A DRIP signature only speaks for this aircraft when its
+                // signer is a DET the aircraft itself broadcasts in a Basic
+                // ID. Otherwise anyone could relay a nearby DRIP aircraft's
+                // signed messages under their own identity.
+                if kind != AuthKind::Link
+                    && kind != AuthKind::Other
+                    && !self.dets().any(|d| d == signer)
+                {
+                    self.auth.unverifiable += 1;
+                    return;
+                }
                 self.auth.valid += 1;
                 if fresh == Some(false) {
                     self.hit(Reason::AuthExpired, now_ms);
@@ -1127,9 +1273,17 @@ impl TrustState {
                 if kind != AuthKind::Link && content_validated {
                     self.auth.any_verified = true;
                     self.auth.verified_ms = Some(now_ms);
+                    self.auth.det = Some(signer);
+                    let clocked = fresh == Some(true);
+                    if clocked {
+                        self.auth.verified_clocked_ms = Some(now_ms);
+                    }
                     if trusted {
                         self.auth.any_trusted = true;
                         self.auth.trusted_ms = Some(now_ms);
+                        if clocked {
+                            self.auth.trusted_clocked_ms = Some(now_ms);
+                        }
                     }
                 }
             }
@@ -1181,6 +1335,18 @@ impl TrustState {
         Some(result)
     }
 
+    /// The DET that signed this aircraft's latest verified DRIP message.
+    /// It is always one of the DETs the aircraft broadcasts, so when the
+    /// aircraft also broadcasts an unsigned serial number, this is the
+    /// identity the signatures vouch for.
+    pub fn authenticated_det(&self) -> Option<Det> {
+        if matches!(self.auth_state(), AuthState::Verified | AuthState::Trusted) {
+            self.auth.det
+        } else {
+            None
+        }
+    }
+
     /// The DRIP authentication state.
     pub fn auth_state(&self) -> AuthState {
         let a = &self.auth;
@@ -1221,9 +1387,16 @@ impl TrustState {
         let auth = self.auth_state();
         let fresh =
             |t: Option<u64>| t.is_some_and(|t| now_ms.saturating_sub(t) <= cfg.auth_fresh_ms);
+        let (trusted_ms, verified_ms) = if cfg.auth_requires_clock {
+            (self.auth.trusted_clocked_ms, self.auth.verified_clocked_ms)
+        } else {
+            (self.auth.trusted_ms, self.auth.verified_ms)
+        };
         let authenticated = match auth {
-            AuthState::Trusted => fresh(self.auth.trusted_ms),
-            AuthState::Verified => cfg.accept_self_certified && fresh(self.auth.verified_ms),
+            AuthState::Trusted => {
+                fresh(trusted_ms) || (cfg.accept_self_certified && fresh(verified_ms))
+            }
+            AuthState::Verified => cfg.accept_self_certified && fresh(verified_ms),
             _ => false,
         };
         let mut score: f32 =
@@ -1233,7 +1406,10 @@ impl TrustState {
         } else if matches!(auth, AuthState::Verified | AuthState::Trusted) {
             score += 0.2;
         }
-        let verdict = if strong > 0 || moderate >= 3 {
+        let moderate_spoofed = cfg
+            .moderate_spoofed
+            .is_some_and(|n| n > 0 && moderate >= n as usize);
+        let verdict = if strong > 0 || moderate_spoofed {
             Verdict::Spoofed
         } else if moderate > 0 || weak >= 2 {
             Verdict::Suspicious

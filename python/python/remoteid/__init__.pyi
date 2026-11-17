@@ -47,7 +47,9 @@ class Tracker:
         accept_self_certified: bool = False,
         trusted_keys: Optional[Mapping[Union[str, bytes], bytes]] = None,
         timeout_ms: int = 10000,
-        use_system_clock: bool = True,
+        use_system_clock: bool = False,
+        auth_requires_clock: bool = True,
+        max_transmitters: int = 4096,
     ) -> None: ...
     def ingest(
         self,

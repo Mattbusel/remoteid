@@ -1,6 +1,6 @@
 [package]
 name = "remoteid"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Matt Busel <matt@busel.dev>"]
 edition = "2021"
 rust-version = "1.70"
@@ -12,7 +12,7 @@ documentation = "https://docs.rs/remoteid"
 readme = "README.md"
 keywords = ["remote-id", "drone", "uas", "drip", "spoofing"]
 categories = ["aerospace::drones", "aerospace::protocols", "no-std", "parser-implementations", "encoding"]
-exclude = ["tests/data", ".github", "python", "fuzz", "tools"]
+exclude = ["tests", ".github", "python", "fuzz", "tools"]
 
 [features]
 default = ["std"]

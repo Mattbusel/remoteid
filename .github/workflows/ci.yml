@@ -50,6 +50,8 @@ jobs:
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+      # The published package must build and test on its own (no tests/).
+      - run: cargo package
   c-reference:
     # Regenerates the golden files from opendroneid-core-c and fails if they drift.
     runs-on: ubuntu-latest

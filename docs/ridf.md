@@ -85,3 +85,14 @@ let (back, _) = Record::decode(&buf[..n]).unwrap();
 assert_eq!(back, rec);
 // back.observation() feeds Tracker::observe; back.transmitter() is its key.
 ```
+
+## Several receivers
+
+`Record::observation()` passes `receiver_id` on, and the trust engine keeps
+signal strength and Wi-Fi TSF continuity per receiver, so a near and a far
+receiver hearing the same frame are not a signal jump. The timing and
+kinematic checks compare receiver times, so feed records from several
+receivers into one tracker only when their times are one shared UTC clock
+(`utc` set); with receiver local monotonic clocks, use one tracker per
+receiver. No check compares receivers with each other yet (for example
+time difference of arrival or signal strength against distance).

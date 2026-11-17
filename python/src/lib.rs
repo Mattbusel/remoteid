@@ -399,7 +399,7 @@ fn verdict_for(tx: &Transmitter, uas: &remoteid::TrackedUas, a: &Assessment) -> 
         auth: a.auth.name().to_string(),
         address: tx_text(tx),
         transport: uas.transport.name().to_string(),
-        uas_id: uas.data.primary_id().map(str::to_string),
+        uas_id: uas.uas_id(),
         latitude: pos.map(|p| p.0),
         longitude: pos.map(|p| p.1),
         altitude_m: loc.and_then(|l| l.altitude_geo).map(f64::from),
@@ -416,21 +416,34 @@ fn unix_now_ms() -> u64 {
 /// Keeps every transmitter heard and its trust verdict. `trusted_keys`
 /// maps DRIP DETs ("2001:30::..." text or 16 bytes) to Ed25519 public keys
 /// (32 bytes): registry or HDA keys, or pinned aircraft keys.
-/// With `use_system_clock`, frames ingested without explicit times are
-/// stamped with this machine's UTC clock, which enables the absolute
-/// timestamp checks; pass `now_ms` and `unix_ms` yourself when replaying
-/// captures.
+///
+/// `use_system_clock` (default False) stamps frames ingested without
+/// explicit times with this machine's UTC clock. That enables the absolute
+/// timestamp checks and the DRIP validity window, so turn it on only when
+/// the clock is NTP or GNSS synced: an unsynced clock (a Raspberry Pi with
+/// no RTC and no network) makes every aircraft look like its clock drifts.
+/// When replaying captures, pass `now_ms` and `unix_ms` yourself.
+///
+/// With `auth_requires_clock` (default True) a DRIP signature only makes a
+/// transmitter "authenticated" when it was checked against its validity
+/// window with a UTC clock; without one a recorded signature could be
+/// replayed.
+///
+/// Transmitters not heard for `timeout_ms` are dropped as frames come in,
+/// and at most `max_transmitters` are kept.
 #[pyclass(module = "remoteid")]
 struct Tracker {
     inner: RTracker,
     start: Instant,
     use_system_clock: bool,
+    last_expire: u64,
 }
 
 #[pymethods]
 impl Tracker {
     #[new]
-    #[pyo3(signature = (max_speed_mps = 100.0, fingerprints = true, accept_self_certified = false, trusted_keys = None, timeout_ms = 10_000, use_system_clock = true))]
+    #[pyo3(signature = (max_speed_mps = 100.0, fingerprints = true, accept_self_certified = false, trusted_keys = None, timeout_ms = 10_000, use_system_clock = false, auth_requires_clock = true, max_transmitters = 4096))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         max_speed_mps: f64,
         fingerprints: bool,
@@ -438,14 +451,21 @@ impl Tracker {
         trusted_keys: Option<&Bound<'_, PyDict>>,
         timeout_ms: u64,
         use_system_clock: bool,
+        auth_requires_clock: bool,
+        max_transmitters: usize,
     ) -> PyResult<Self> {
+        if max_transmitters == 0 {
+            return Err(bad("max_transmitters must be at least 1"));
+        }
         let mut trust = TrustConfig::default();
         trust.max_speed_mps = max_speed_mps;
         trust.fingerprints = fingerprints;
         trust.accept_self_certified = accept_self_certified;
+        trust.auth_requires_clock = auth_requires_clock;
         let mut inner = RTracker::new(TrackerConfig {
             timeout: timeout_ms,
             trust,
+            max_transmitters,
             ..TrackerConfig::default()
         });
         if let Some(keys) = trusted_keys {
@@ -471,16 +491,28 @@ impl Tracker {
             inner,
             start: Instant::now(),
             use_system_clock,
+            last_expire: 0,
         })
+    }
+
+    fn auto_expire(&mut self, now: u64) {
+        if now.saturating_sub(self.last_expire) >= 1_000 || now < self.last_expire {
+            self.last_expire = now;
+            self.inner.expire(now);
+        }
     }
 
     /// ingest(data, transport="auto", address=None, now_ms=None, unix_ms=None, rssi=None)
     /// --
     ///
     /// Adds one frame (see `decode` for `transport`) and returns the
-    /// transmitter's `Verdict`. `address` identifies the transmitter for
-    /// Bluetooth and element-only Wi-Fi input ("aa:bb:..." or 6 bytes);
-    /// whole Wi-Fi frames carry their own.
+    /// transmitter's `Verdict`. `address` identifies the transmitter
+    /// ("aa:bb:..." or 6 bytes) and is required for every input that does
+    /// not carry one (Bluetooth advertising or service data, Wi-Fi vendor
+    /// elements, element lists, NAN bodies, bare payloads): without it,
+    /// frames from different aircraft would be merged into one track and
+    /// judged as one. Whole Wi-Fi frames carry their own address. Raises
+    /// ValueError when no address is known.
     #[pyo3(signature = (data, transport = "auto", address = None, now_ms = None, unix_ms = None, rssi = None))]
     fn ingest(
         &mut self,
@@ -499,10 +531,17 @@ impl Tracker {
         let tx = match (addr, e.transport) {
             (Some(a), Transport::Bluetooth4 | Transport::Bluetooth5) => Transmitter::Ble(a),
             (Some(a), _) => Transmitter::Wifi(a),
-            (None, _) => Transmitter::Other(0),
+            (None, _) => {
+                return Err(bad(format!(
+                    "{transport:?} input carries no transmitter address; pass address= \
+                     (the Bluetooth or Wi-Fi source address) so that different aircraft \
+                     are not merged into one track"
+                )))
+            }
         };
         let explicit = now_ms.is_some();
         let now = now_ms.unwrap_or_else(|| self.start.elapsed().as_millis() as u64);
+        self.auto_expire(now);
         let mut obs = Observation::new(e.transport, e.counter, e.payload, now);
         let unix = unix_ms.or_else(|| (!explicit && self.use_system_clock).then(unix_now_ms));
         if let Some(u) = unix {
@@ -518,11 +557,20 @@ impl Tracker {
         Ok(verdict_for(&tx, uas, &uas.assessment))
     }
 
-    /// Adds every record of a RIDF stream (bytes); returns one Verdict per record.
+    /// Adds every record of a RIDF stream (bytes); returns one Verdict per
+    /// record. Records need a transmitter address (ValueError otherwise).
+    /// Records from several receivers belong in one Tracker only when their
+    /// times are one shared UTC clock (the `utc` flag).
     fn ingest_ridf(&mut self, data: &[u8]) -> PyResult<Vec<Verdict>> {
         let mut out = Vec::new();
         for r in ridf::records(data) {
             let r = r.map_err(|e| bad(e.to_string()))?;
+            if r.address.is_none() {
+                return Err(bad(
+                    "RIDF record without a transmitter address; different aircraft would be merged",
+                ));
+            }
+            self.auto_expire(r.rx_time_ns / 1_000_000);
             let tx = r.transmitter();
             let uas = self.inner.observe(tx, &r.observation());
             out.push(verdict_for(&tx, uas, &uas.assessment));

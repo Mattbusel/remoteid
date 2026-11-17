@@ -20,6 +20,12 @@ use remoteid::{
     TrackerConfig, Transmitter, Transport, UaType, Verdict,
 };
 
+/// A receiver UTC clock (2026-11-17), inside the VNB / VNA windows the
+/// signer tests use.
+const UNIX_MS: u64 = 1_794_916_800_000;
+/// The Auth page timestamp for [`UNIX_MS`] (seconds since 2019-01-01).
+const AUTH_TS: u32 = (UNIX_MS / 1000 - 1_546_300_800) as u32;
+
 const DET: &str = "2001003ffe000105a29b3ff42226c04e";
 const HI: &str = "b5fef530d450dedb59ebafa18b00d7f5ed0ac08a81975034297bea2b00041813";
 
@@ -267,25 +273,41 @@ fn rfc_bt4_stream(tracker: &mut Tracker, addr: [u8; 6]) -> remoteid::Assessment 
 
 #[test]
 fn rfc9575_stream_through_tracker() {
+    // The stream has no receiver UTC clock, so the signatures cannot be
+    // checked against VNB / VNA: they verify, but the verdict stays below
+    // Authenticated unless the clock requirement is switched off.
+    let mut no_clock = TrackerConfig::default();
+    no_clock.trust.auth_requires_clock = false;
+
     // Key learned from the Link only: self certified.
-    let mut t = Tracker::default();
+    let mut t = Tracker::new(no_clock);
     let a = rfc_bt4_stream(&mut t, [1; 6]);
     assert_eq!(a.auth, AuthState::Verified);
     assert_eq!(a.verdict, Verdict::Plausible, "{:?}", a.reasons);
 
-    let mut cfg = TrackerConfig::default();
+    let mut cfg = no_clock;
     cfg.trust.accept_self_certified = true;
     let mut t = Tracker::new(cfg);
     let a = rfc_bt4_stream(&mut t, [1; 6]);
     assert_eq!(a.verdict, Verdict::Authenticated, "{:?}", a.reasons);
 
     // The aircraft key pinned as trusted.
-    let mut t = Tracker::default();
+    let mut t = Tracker::new(no_clock);
     t.keys_mut().trust(det(), hi());
     let a = rfc_bt4_stream(&mut t, [1; 6]);
     assert_eq!(a.auth, AuthState::Trusted);
     assert_eq!(a.verdict, Verdict::Authenticated, "{:?}", a.reasons);
     assert!(a.score > 0.9);
+    // The identity shown is the signing DET.
+    let u = t.get(&Transmitter::Ble([1; 6])).unwrap();
+    assert_eq!(u.uas_id(), Some(det().to_string()));
+
+    // Default settings: trusted signatures, but no clock, so not Authenticated.
+    let mut t = Tracker::default();
+    t.keys_mut().trust(det(), hi());
+    let a = rfc_bt4_stream(&mut t, [1; 6]);
+    assert_eq!(a.auth, AuthState::Trusted);
+    assert_eq!(a.verdict, Verdict::Plausible, "{:?}", a.reasons);
 }
 
 /// Bluetooth 4 Location with the given latitude.
@@ -330,12 +352,15 @@ fn signed_chain_over_extended_transport() {
         let now = 1_000 + 1_000 * i;
         // Pack 1: the Link.
         let mut b = MessagePackBuilder::new();
-        for p in &drip::paginate(AuthType::SpecificAuthentication, 2, 0, &link, false).unwrap() {
+        for p in
+            &drip::paginate(AuthType::SpecificAuthentication, 2, AUTH_TS, &link, false).unwrap()
+        {
             b.push(&Message::Auth(p.clone())).unwrap();
         }
         t.observe(
             Transmitter::Ble([7; 6]),
-            &Observation::new(Transport::Bluetooth5, Some(2 * i as u8), b.as_bytes(), now),
+            &Observation::new(Transport::Bluetooth5, Some(2 * i as u8), b.as_bytes(), now)
+                .with_unix_ms(UNIX_MS + now),
         );
         // Pack 2: Basic ID, Location and the Wrapper over both.
         let loc = location(47.0 + i as f64 * 1e-6);
@@ -346,7 +371,9 @@ fn signed_chain_over_extended_transport() {
         let mut b = MessagePackBuilder::new();
         b.push_raw(&id).unwrap();
         b.push_raw(&loc).unwrap();
-        for p in &drip::paginate(AuthType::SpecificAuthentication, 2, 0, &w[..n], false).unwrap() {
+        for p in
+            &drip::paginate(AuthType::SpecificAuthentication, 2, AUTH_TS, &w[..n], false).unwrap()
+        {
             b.push(&Message::Auth(p.clone())).unwrap();
         }
         a = t
@@ -357,7 +384,8 @@ fn signed_chain_over_extended_transport() {
                     Some(2 * i as u8 + 1),
                     b.as_bytes(),
                     now + 500,
-                ),
+                )
+                .with_unix_ms(UNIX_MS + now + 500),
             )
             .assessment;
     }
@@ -377,13 +405,15 @@ fn signed_chain_over_extended_transport() {
     let mut b = MessagePackBuilder::new();
     b.push_raw(&id).unwrap();
     b.push_raw(&loc).unwrap();
-    for p in &drip::paginate(AuthType::SpecificAuthentication, 2, 0, &w[..n], false).unwrap() {
+    for p in &drip::paginate(AuthType::SpecificAuthentication, 2, AUTH_TS, &w[..n], false).unwrap()
+    {
         b.push(&Message::Auth(p.clone())).unwrap();
     }
     let a = t
         .observe(
             Transmitter::Ble([7; 6]),
-            &Observation::new(Transport::Bluetooth5, Some(99), b.as_bytes(), 20_000),
+            &Observation::new(Transport::Bluetooth5, Some(99), b.as_bytes(), 20_000)
+                .with_unix_ms(UNIX_MS + 20_000),
         )
         .assessment;
     assert_eq!(a.auth, AuthState::Conflicting);
@@ -411,7 +441,7 @@ fn expired_signature_is_not_authenticated() {
         b.push(&Message::Auth(p.clone())).unwrap();
     }
     // Received in 2026: a replay.
-    let unix_ms = 1_794_916_800_000;
+    let unix_ms = UNIX_MS;
     let obs =
         Observation::new(Transport::Bluetooth5, Some(1), b.as_bytes(), 1_000).with_unix_ms(unix_ms);
     let a = t.observe(Transmitter::Ble([8; 6]), &obs).assessment;
@@ -440,11 +470,12 @@ fn legacy_wrapper_and_manifest_from_signer() {
     };
     t.observe(
         tx,
-        &Observation::new(Transport::Bluetooth4, Some(next()), &id, 1_000),
+        &Observation::new(Transport::Bluetooth4, Some(next()), &id, 1_000).with_unix_ms(UNIX_MS),
     );
     t.observe(
         tx,
-        &Observation::new(Transport::Bluetooth4, Some(next()), &loc, 1_010),
+        &Observation::new(Transport::Bluetooth4, Some(next()), &loc, 1_010)
+            .with_unix_ms(UNIX_MS + 10),
     );
     let mut out = [0u8; 201];
     let (n, _) = ua
@@ -457,7 +488,14 @@ fn legacy_wrapper_and_manifest_from_signer() {
             &mut out,
         )
         .unwrap();
-    let ps = drip::paginate(AuthType::SpecificAuthentication, 2, 0, &out[..n], true).unwrap();
+    let ps = drip::paginate(
+        AuthType::SpecificAuthentication,
+        2,
+        AUTH_TS,
+        &out[..n],
+        true,
+    )
+    .unwrap();
     let mut a = remoteid::Assessment::default();
     for (i, p) in ps.iter().enumerate() {
         if i == 2 {
@@ -469,7 +507,8 @@ fn legacy_wrapper_and_manifest_from_signer() {
         a = t
             .observe(
                 tx,
-                &Observation::new(Transport::Bluetooth4, Some(next()), &raw, 1_100 + i as u64),
+                &Observation::new(Transport::Bluetooth4, Some(next()), &raw, 1_100 + i as u64)
+                    .with_unix_ms(UNIX_MS + 100 + i as u64),
             )
             .assessment;
     }
@@ -477,4 +516,96 @@ fn legacy_wrapper_and_manifest_from_signer() {
     // number advanced together, and FEC rebuilt page 2.
     assert_eq!(a.auth, AuthState::Trusted, "{a:?}");
     assert_eq!(a.verdict, Verdict::Authenticated);
+}
+
+/// One transmitter sending `basic_ids`, a Location replayed from a DRIP
+/// aircraft and that aircraft's signed legacy Wrapper over it, five times.
+fn obs(raw: &[u8; 25], at: u64) -> Observation<'_> {
+    Observation::new(Transport::Bluetooth4, None, raw, at).with_unix_ms(UNIX_MS + at)
+}
+
+fn relay(t: &mut Tracker, tx: Transmitter, ua: &DripSigner, basic_ids: &[[u8; 25]]) {
+    let mut c = 0u8;
+    let mut next = || {
+        c = c.wrapping_add(1);
+        c
+    };
+    for i in 0..5u64 {
+        let now = 1_000 + i * 1_000;
+        for id in basic_ids {
+            let mut o = obs(id, now);
+            o.counter = Some(next());
+            t.observe(tx, &o);
+        }
+        let loc = location(46.5);
+        let mut o = obs(&loc, now + 10);
+        o.counter = Some(next());
+        t.observe(tx, &o);
+        let mut out = [0u8; 201];
+        let n = ua.wrapper(0, u32::MAX, &[loc], &mut out).unwrap();
+        let ps = drip::paginate(
+            AuthType::SpecificAuthentication,
+            2,
+            AUTH_TS,
+            &out[..n],
+            false,
+        )
+        .unwrap();
+        for (k, p) in ps.iter().enumerate() {
+            let raw = Message::Auth(p.clone()).encode().unwrap();
+            let mut o = obs(&raw, now + 100 + k as u64);
+            o.counter = Some(next());
+            t.observe(tx, &o);
+        }
+    }
+}
+
+#[test]
+fn relayed_signature_does_not_authenticate_another_identity() {
+    // A spoofer relays a nearby DRIP aircraft's Location and signed Wrapper
+    // under its own serial number Basic ID (no DET). The signature is valid
+    // and the key trusted, but it says nothing about this identity.
+    let ua = DripSigner::new([0x55; 32], 100, 200);
+    let serial = Message::BasicId(
+        BasicId::new(
+            IdType::SerialNumber,
+            UaType::HelicopterOrMultirotor,
+            "1596F35074529ABCDEFG",
+        )
+        .unwrap(),
+    )
+    .encode()
+    .unwrap();
+    let mut t = Tracker::default();
+    t.keys_mut().trust(ua.det(), ua.hi());
+    let tx = Transmitter::Ble([0xAA; 6]);
+    relay(&mut t, tx, &ua, &[serial]);
+    let u = t.get(&tx).unwrap();
+    assert_eq!(u.assessment.auth, AuthState::Unverifiable);
+    assert_ne!(u.assessment.verdict, Verdict::Authenticated);
+    assert_eq!(u.uas_id().as_deref(), Some("1596F35074529ABCDEFG"));
+
+    // With the aircraft's DET broadcast as well, the signature binds to that
+    // DET, and the identity shown is the DET, not the unsigned serial.
+    let mut t = Tracker::default();
+    t.keys_mut().trust(ua.det(), ua.hi());
+    relay(&mut t, tx, &ua, &[serial, det_basic_id(&ua.det())]);
+    let u = t.get(&tx).unwrap();
+    assert_eq!(u.assessment.auth, AuthState::Trusted);
+    assert_eq!(u.assessment.verdict, Verdict::Authenticated);
+    assert_eq!(u.uas_id(), Some(ua.det().to_string()));
+    assert_eq!(u.trust.authenticated_det(), Some(ua.det()));
+}
+
+#[test]
+fn signer_must_be_broadcast_det_in_auth_scheme() {
+    // Standalone verification without any broadcast DET is unverifiable.
+    let recent: Vec<[u8; 25]> = MESSAGES.iter().map(|m| msg25(m)).collect();
+    let ctx = ctx_with(&recent, &[], &[]);
+    let mut keys = MemoryKeyStore::new();
+    keys.trust(det(), hi());
+    assert_eq!(
+        DripEd25519.verify(&assemble(&WRAPPER), &ctx, &mut keys),
+        AuthResult::Unverifiable
+    );
 }

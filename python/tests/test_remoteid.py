@@ -52,7 +52,7 @@ def track(name, **kw):
 
 
 def test_version():
-    assert remoteid.__version__ == "0.2.0"
+    assert remoteid.__version__ == "0.2.1"
 
 
 def test_decode_frame_and_vendor_element():
@@ -186,7 +186,12 @@ def test_rfc9575_example_is_authenticated_with_pinned_key():
         "2257f5e8eebcb04f8c2197526053e66c010d5d7297ff7c1fe0",
     ]
     hi = bytes.fromhex("b5fef530d450dedb59ebafa18b00d7f5ed0ac08a81975034297bea2b00041813")
-    t = remoteid.Tracker(trusted_keys={"2001:3f:fe00:105:a29b:3ff4:2226:c04e": hi})
+    # The RFC example's validity window cannot be checked against a clock
+    # (see docs/drip.md), so the clock requirement is switched off here.
+    t = remoteid.Tracker(
+        trusted_keys={"2001:3f:fe00:105:a29b:3ff4:2226:c04e": hi},
+        auth_requires_clock=False,
+    )
     counters = {}
     now = 1000
 
@@ -205,3 +210,37 @@ def test_rfc9575_example_is_authenticated_with_pinned_key():
         v = send(p)
     assert v.auth == "trusted", v
     assert v.verdict == "authenticated", v
+    # The identity shown is the signing DET.
+    assert v.uas_id == "2001:3f:fe00:105:a29b:3ff4:2226:c04e", v
+
+
+def _ble_adv(lat_e7):
+    loc = bytes([0x12, 0x20, 0, 0, 0]) + lat_e7.to_bytes(4, "little", signed=True)
+    loc += (85000000).to_bytes(4, "little", signed=True) + bytes(12)
+    return bytes([30, 0x16, 0xFA, 0xFF, 0x0D, 1]) + loc
+
+
+def test_ingest_without_address_is_refused():
+    # Two aircraft 65 km apart must not be merged into one track.
+    t = remoteid.Tracker()
+    with pytest.raises(ValueError, match="address"):
+        t.ingest(_ble_adv(465000000), "ble_adv", now_ms=0)
+    a = t.ingest(_ble_adv(465000000), "ble_adv", address="c0:00:00:00:00:01", now_ms=0)
+    b = t.ingest(_ble_adv(471000000), "ble_adv", address="c0:00:00:00:00:02", now_ms=0)
+    assert len(t) == 2
+    assert a.verdict == b.verdict == "plausible"
+
+
+def test_tracker_expires_and_is_bounded():
+    t = remoteid.Tracker(timeout_ms=1000, max_transmitters=3)
+    for i in range(10):
+        t.ingest(_ble_adv(465000000), "ble_adv", address=bytes([0xC0, 0, 0, 0, 0, i]), now_ms=i)
+    assert len(t) == 3
+    t.ingest(_ble_adv(465000000), "ble_adv", address="c0:00:00:00:00:63", now_ms=10_000)
+    assert len(t) == 1
+
+
+def test_system_clock_is_off_by_default():
+    t = remoteid.Tracker()
+    v = t.ingest(_ble_adv(465000000), "ble_adv", address="c0:00:00:00:00:01")
+    assert "system_clock_drift" not in v.reasons

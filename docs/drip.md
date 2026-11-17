@@ -18,7 +18,7 @@ message automatically and the verdict can reach `Authenticated`.
 | SAM type | Format | Checked |
 |---|---|---|
 | 0x01 | DRIP Link (Broadcast Endorsement) | parent signature; child DET must hash to the child HI; the child key is learned (trusted only if the parent is) |
-| 0x02 | DRIP Wrapper, up to 4 messages | UA signature; signer DET must be the DET in the Basic ID; a wrapped Location must equal one received |
+| 0x02 | DRIP Wrapper, up to 4 messages | UA signature; signer DET must be a DET the aircraft broadcasts in a Basic ID (no DET Basic ID heard: `unverifiable`); a wrapped Location must equal one received |
 | 0x02 | DRIP Wrapper over an extended transport (no evidence) | UA signature over the pack's other messages, rebuilt in message type order |
 | 0x03 | DRIP Manifest | UA signature, Current Manifest Hash, and at least one hashed Location (or pack with a Location) matching what was received |
 | 0x04 | DRIP Frame | UA signature (no frame types are registered yet, so content is not validated) |
@@ -55,6 +55,33 @@ A Link proves a key, not live data, so only Wrapper, Manifest and Frame
 signatures move the state to `verified` or `trusted`. A valid signature
 outside its VNB / VNA window (when the receiver has a UTC clock) does not
 count and adds the weak reason `auth_expired`.
+
+### Binding to the broadcast identity
+
+A Wrapper, Manifest or Frame counts for an aircraft only when its signer DET
+is one of the DETs that aircraft broadcasts in its own Basic ID messages.
+This is checked twice: `DripEd25519` returns `SignerNotUas` for another DET
+and `Unverifiable` when the aircraft has broadcast no DET yet, and
+`TrustState::record_auth` ignores any valid result whose signer is not a
+broadcast DET, whatever `AuthScheme` produced it. Without this, a spoofer
+could relay a nearby DRIP aircraft's Location and signed Wrapper under its
+own serial number and be shown as authenticated.
+
+When an aircraft is verified, `TrustState::authenticated_det()` is the DET
+that signed, and `TrackedUas::uas_id()` (the Python `Verdict.uas_id` and
+the `aircraft.json` writer use it) shows that DET rather than an unsigned
+serial number Basic ID sent beside it.
+
+### Replay and the receiver clock
+
+Without a receiver UTC clock the VNB / VNA window cannot be checked, and a
+signed message recorded earlier and replayed elsewhere verifies like a live
+one. `TrustConfig::auth_requires_clock` (default true) therefore grants
+`Authenticated` only for signatures checked inside their window with
+`Observation::unix_ms` set. Without a clock the auth state still reads
+`verified` or `trusted`, and the verdict stays `Plausible`. Set it to false
+to accept unclocked signatures (for example to replay the RFC example,
+whose validity window cannot be checked, see below).
 
 ## Bluetooth 4 page assembly
 

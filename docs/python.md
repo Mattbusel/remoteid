@@ -60,7 +60,9 @@ tracker = remoteid.Tracker(
     accept_self_certified=False,
     trusted_keys=None,          # {DET text or 16 bytes: Ed25519 public key (32 bytes)}
     timeout_ms=10_000,
-    use_system_clock=True,
+    use_system_clock=False,
+    auth_requires_clock=True,
+    max_transmitters=4096,
 )
 v = tracker.ingest(data, transport="auto", address=None, now_ms=None, unix_ms=None, rssi=None)
 ```
@@ -71,14 +73,31 @@ v = tracker.ingest(data, transport="auto", address=None, now_ms=None, unix_ms=No
 `frames`, `is_alert` and `to_dict()`. The reasons are explained in
 `trust.md`.
 
-Times: by default a frame is stamped with a monotonic clock and, with
-`use_system_clock`, the machine's UTC clock (which enables the absolute
-timestamp checks; leave it on only if the clock is NTP or GNSS synced).
-When replaying a capture, pass `now_ms` (and `unix_ms` if the capture
-clock was right) from the packet timestamps.
+Times: by default a frame is stamped with a monotonic clock only.
+`use_system_clock=True` adds the machine's UTC clock, which enables the
+absolute timestamp checks and the DRIP validity window. Turn it on only if
+the clock is NTP or GNSS synced: on an unsynced clock (a Raspberry Pi with
+no RTC and no network) every aircraft would show `system_clock_drift` and
+`location_clock_drift`. When replaying a capture, pass `now_ms` (and
+`unix_ms` if the capture clock was right) from the packet timestamps.
 
-`address` identifies Bluetooth transmitters and element-only Wi-Fi input;
-whole Wi-Fi frames carry their own source address.
+`auth_requires_clock` (default True): a DRIP signature only makes a
+transmitter `authenticated` when it was checked against its validity window
+with a UTC clock (from `unix_ms` or `use_system_clock`); without one a
+recorded signature could be replayed. `uas_id` is the signing DET once an
+aircraft is verified.
+
+`address` is required for every input that does not carry its own
+(`ble_adv`, `ble_service_data`, `wifi_vendor_ie`, `wifi_ies`, `nan`,
+`payload`, and `auto` when it finds one of those): `ingest` raises
+ValueError without it, because frames from different aircraft would
+otherwise be merged into one track and judged as one, with false teleport
+and counter alerts. Whole Wi-Fi frames carry their own source address.
+`ingest_ridf` needs an address in every record for the same reason.
+
+Memory: transmitters not heard for `timeout_ms` are dropped as frames come
+in, and at most `max_transmitters` are kept (the least recently heard goes
+first), so a flood of frames from random addresses stays bounded.
 
 Other methods: `verdicts()`, `get(address)`, `aircraft_json(...)` (see
 `aircraft-json.md`), `ingest_ridf(bytes)`, `expire(now_ms=None)`, `len()`.

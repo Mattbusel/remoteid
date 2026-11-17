@@ -144,22 +144,48 @@ fn spoofed_captures_are_spoofed() {
 #[test]
 fn generic_checks_without_fingerprints() {
     // What the physics and protocol checks catch with no tool knowledge.
-    // Every transmitter is at least Suspicious; these are Spoofed.
+    // Every one of the 12 spoofed transmitters is at least Suspicious. By
+    // default only strong reasons make a transmitter Spoofed (moderate ones
+    // alone cap at Suspicious), which leaves the two captures with a
+    // teleporting track Spoofed: 4 of 12, with or without a UTC clock.
     let spoofed_generic = [
         "spoof/cdc_wifi_random3.pcap",
         "spoof/cdc_wifi_same_mac.pcap",
-        "spoof/jjshoots_esp8266_beacon_1drone.pcap",
     ];
-    for (name, _, _) in SPOOF {
-        for (tx, verdict, reasons) in verdicts(name, true, false) {
-            assert!(!reasons.contains(&Reason::KnownSpoofer));
-            assert!(
-                verdict <= Verdict::Suspicious,
-                "{name} {tx}: {verdict:?} {reasons:?}"
-            );
-            if spoofed_generic.contains(name) {
-                assert_eq!(verdict, Verdict::Spoofed, "{name} {tx}: {reasons:?}");
+    for utc in [true, false] {
+        let (mut total, mut spoofed) = (0, 0);
+        for (name, _, _) in SPOOF {
+            for (tx, verdict, reasons) in verdicts(name, utc, false) {
+                total += 1;
+                assert!(!reasons.contains(&Reason::KnownSpoofer));
+                assert!(
+                    verdict <= Verdict::Suspicious,
+                    "{name} {tx}: {verdict:?} {reasons:?}"
+                );
+                if spoofed_generic.contains(name) {
+                    assert_eq!(verdict, Verdict::Spoofed, "{name} {tx}: {reasons:?}");
+                }
+                spoofed += (verdict == Verdict::Spoofed) as usize;
             }
         }
+        assert_eq!((total, spoofed), (12, 4), "utc={utc}");
+    }
+
+    // With three moderate reasons counting as Spoofed (the 0.2.0 rule):
+    // 6 of 12 with a UTC clock, 4 of 12 without.
+    for (utc, want) in [(true, 6), (false, 4)] {
+        let mut cfg = TrustConfig::default();
+        cfg.fingerprints = false;
+        cfg.moderate_spoofed = Some(3);
+        let spoofed: usize = SPOOF
+            .iter()
+            .map(|(name, _, _)| {
+                common::track_with(name, utc, cfg)
+                    .iter()
+                    .filter(|(_, u)| u.assessment.verdict == Verdict::Spoofed)
+                    .count()
+            })
+            .sum();
+        assert_eq!(spoofed, want, "utc={utc}");
     }
 }

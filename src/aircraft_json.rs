@@ -123,8 +123,8 @@ pub fn write_aircraft(
     out.push_str("\"hex\":");
     esc(out, &hex_id(tx));
     out.push_str(",\"type\":\"other\"");
-    let id = uas.data.primary_id();
-    if let Some(id) = id {
+    let id = uas.uas_id();
+    if let Some(id) = id.as_deref() {
         out.push_str(",\"flight\":");
         esc(out, &id.chars().take(8).collect::<String>());
         out.push_str(",\"r\":");
@@ -190,7 +190,7 @@ pub fn write_aircraft(
             u8::from(b.ua_type)
         );
     }
-    if let Some(id) = id {
+    if let Some(id) = id.as_deref() {
         out.push_str(",\"id\":");
         esc(out, id);
     }

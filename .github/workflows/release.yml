@@ -17,6 +17,16 @@ jobs:
             target: x86_64
           - os: ubuntu-latest
             target: aarch64
+          # Raspberry Pi OS 32-bit and other armv7 glibc systems.
+          - os: ubuntu-latest
+            target: armv7
+          # Alpine and other musl systems.
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: musllinux_1_2
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: musllinux_1_2
           - os: macos-latest
             target: x86_64
           - os: macos-latest
@@ -33,11 +43,11 @@ jobs:
         with:
           working-directory: python
           target: ${{ matrix.target }}
-          manylinux: auto
+          manylinux: ${{ matrix.manylinux || 'auto' }}
           args: --release --out dist
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.os }}-${{ matrix.target }}
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'auto' }}
           path: python/dist/*.whl
   sdist:
     runs-on: ubuntu-latest

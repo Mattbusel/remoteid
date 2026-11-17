@@ -62,9 +62,22 @@ pub struct TrackedUas {
     pub transport: Transport,
     last_counter: [Option<u8>; 8],
     last_fix: Option<(u64, f64, f64, f64)>,
+    /// The identity this entry is filed under in the tracker's index.
+    indexed_id: Option<String>,
 }
 
 impl TrackedUas {
+    /// The identity to show for this aircraft: the DRIP DET that signed its
+    /// verified messages when there is one (an unsigned serial number Basic
+    /// ID sent beside it proves nothing), else the first Basic ID.
+    pub fn uas_id(&self) -> Option<String> {
+        #[cfg(feature = "verify")]
+        if let Some(det) = self.trust.authenticated_det() {
+            return Some(det.to_string());
+        }
+        self.data.primary_id().map(str::to_owned)
+    }
+
     /// Time, latitude, longitude and horizontal accuracy (m) of the latest
     /// position.
     pub fn last_fix(&self) -> Option<(u64, f64, f64, f64)> {
@@ -84,6 +97,12 @@ pub struct TrackerConfig {
     /// Trust check settings. The trust checks need the caller's time unit to
     /// be milliseconds.
     pub trust: TrustConfig,
+    /// Most transmitters kept at once (default 4096; each takes several
+    /// KB). When a new one arrives with the tracker full, aircraft past
+    /// `timeout` are dropped first, then the one heard least recently, so
+    /// a flood of frames from random addresses cannot grow memory without
+    /// bound.
+    pub max_transmitters: usize,
 }
 
 impl Default for TrackerConfig {
@@ -95,6 +114,7 @@ impl Default for TrackerConfig {
             timeout: 10_000,
             reorder_window: 8,
             trust: TrustConfig::default(),
+            max_transmitters: 4096,
         }
     }
 }
@@ -130,6 +150,8 @@ impl Default for TrackerConfig {
 pub struct Tracker {
     config: TrackerConfig,
     uas: HashMap<Transmitter, TrackedUas>,
+    /// Transmitters by primary UAS ID, for the identity cross-check.
+    by_id: HashMap<String, Vec<Transmitter>>,
     tsf_seen: Vec<(u64, Transmitter, u64)>,
     #[cfg(feature = "verify")]
     keys: crate::auth::MemoryKeyStore,
@@ -206,6 +228,9 @@ impl Tracker {
         let now = obs.now_ms;
         let window = self.config.reorder_window;
         let cfg = self.config.trust;
+        if !self.uas.contains_key(&from) && self.uas.len() >= self.config.max_transmitters.max(1) {
+            self.make_room(now);
+        }
         let entry = self.uas.entry(from).or_insert_with(|| TrackedUas {
             first_seen: now,
             ..TrackedUas::default()
@@ -253,11 +278,28 @@ impl Tracker {
             }
         }
         entry.stats.received += 1;
-        let had_location = entry.data.location.clone();
+        // Every received Location refreshes the fix, also when it repeats
+        // the previous one (a hovering aircraft, or a clone standing still).
+        let has_location = match &frame {
+            Frame::Message(m) => m.message_type() == MessageType::Location,
+            Frame::Pack(p) => p.raw_messages().any(|m| m[0] >> 4 == 1),
+        };
         entry.data.update_frame(&frame);
+        let id_now = entry.data.primary_id();
+        if id_now != entry.indexed_id.as_deref() {
+            let new = id_now.map(str::to_owned);
+            let old = core::mem::replace(&mut entry.indexed_id, new.clone());
+            if let Some(old) = old {
+                Self::unindex(&mut self.by_id, &old, &from);
+            }
+            if let Some(new) = new {
+                self.by_id.entry(new).or_default().push(from);
+            }
+        }
+        let entry = self.uas.get_mut(&from).expect("inserted above");
         let mut new_fix = false;
         if let Some(l) = &entry.data.location {
-            if had_location.as_ref() != Some(l) && l.is_plausible() {
+            if has_location && l.is_plausible() {
                 if let Some((lat, lon)) = l.position() {
                     let hacc = l
                         .horizontal_accuracy
@@ -299,8 +341,12 @@ impl Tracker {
             return;
         };
         let mut hits: Vec<(Transmitter, Reason)> = Vec::new();
-        for (tx, other) in &self.uas {
-            if *tx == from || other.data.primary_id() != Some(id.as_str()) {
+        let same_id = self.by_id.get(&id).map_or(&[][..], Vec::as_slice);
+        for tx in same_id {
+            let Some(other) = self.uas.get(tx) else {
+                continue;
+            };
+            if *tx == from {
                 continue;
             }
             let Some((t1, lat1, lon1, acc1)) = other.last_fix else {
@@ -370,11 +416,49 @@ impl Tracker {
 
     /// Removes aircraft not heard since `now - timeout`. Returns how many.
     pub fn expire(&mut self, now: u64) -> usize {
-        let before = self.uas.len();
         let timeout = self.config.timeout;
-        self.uas
-            .retain(|_, u| now.saturating_sub(u.last_seen) <= timeout);
-        before - self.uas.len()
+        let gone: Vec<Transmitter> = self
+            .uas
+            .iter()
+            .filter(|(_, u)| now.saturating_sub(u.last_seen) > timeout)
+            .map(|(tx, _)| *tx)
+            .collect();
+        for tx in &gone {
+            self.remove(tx);
+        }
+        gone.len()
+    }
+
+    /// Stops tracking one transmitter; returns its entry.
+    pub fn remove(&mut self, from: &Transmitter) -> Option<TrackedUas> {
+        let u = self.uas.remove(from)?;
+        if let Some(id) = &u.indexed_id {
+            Self::unindex(&mut self.by_id, id, from);
+        }
+        Some(u)
+    }
+
+    fn unindex(by_id: &mut HashMap<String, Vec<Transmitter>>, id: &str, tx: &Transmitter) {
+        if let Some(v) = by_id.get_mut(id) {
+            v.retain(|t| t != tx);
+            if v.is_empty() {
+                by_id.remove(id);
+            }
+        }
+    }
+
+    fn make_room(&mut self, now: u64) {
+        if self.expire(now) > 0 {
+            return;
+        }
+        let oldest = self
+            .uas
+            .iter()
+            .min_by_key(|(_, u)| u.last_seen)
+            .map(|(tx, _)| *tx);
+        if let Some(tx) = oldest {
+            self.remove(&tx);
+        }
     }
 
     /// The entry for one transmitter.
