@@ -34,7 +34,7 @@ reference.
 
 ```toml
 [dependencies]
-remoteid = "0.1"
+remoteid = "0.2"
 ```
 
 Bluetooth (for example service data from `btleplug` for UUID `0xFFFA`):
@@ -109,8 +109,11 @@ Wifi([132, 204, 168, 96, 67, 36])
 * `BasicId::serial_number()` splits and validates ANSI/CTA-2063-A serial
   numbers (manufacturer code, length character, serial).
 * `UasData` merges messages into one record per aircraft and joins
-  multi-page authentication data (`auth_data`). Signatures are not verified:
-  the key scheme is operator specific.
+  multi-page authentication data (`auth_data`). With the `verify` feature,
+  DRIP (RFC 9575) Ed25519 signatures are checked ([docs/drip.md](docs/drip.md));
+  other schemes plug in through `auth::AuthScheme`.
+* `trust` grades every transmitter `Authenticated`, `Plausible`,
+  `Suspicious` or `Spoofed`, with the reasons ([docs/trust.md](docs/trust.md)).
 * `Tracker` (with the default `std` feature) keys aircraft by radio address,
   counts duplicate and missed frames from the message counters, and expires
   aircraft that went quiet. It takes timestamps from the caller, so a
@@ -137,12 +140,14 @@ Wifi([132, 204, 168, 96, 67, 36])
   parser, with no panic.
 
 See [docs/testing.md](docs/testing.md) for how to regenerate the reference
-data, and [docs/format.md](docs/format.md) for the byte layouts.
+data, [docs/format.md](docs/format.md) for the byte layouts, and
+[docs/integration.md](docs/integration.md) for using it inside another
+project (features, the API to depend on, MSRV, versioning).
 
 ## Status
 
-0.1: the message layer and transports are complete and checked against the
-reference. Not included yet: MAVLink `OPEN_DRONE_ID_*` conversion (the
+0.2: the message layer and transports are complete and checked against the
+reference; trust verdicts and DRIP verification were added in 0.2. Not included yet: MAVLink `OPEN_DRONE_ID_*` conversion (the
 MAVLink messages carry the same 25 byte payloads, so `Message::decode` works
 on their data fields directly) and Network Remote ID (ASTM F3411 NetRID
 JSON).

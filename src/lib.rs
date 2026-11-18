@@ -187,6 +187,10 @@ impl core::fmt::Display for Transport {
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
 
+#[cfg(all(doctest, feature = "std"))]
+#[doc = include_str!("../docs/integration.md")]
+struct IntegrationDoctests;
+
 /// Size in bytes of every single Remote ID message.
 pub const MESSAGE_SIZE: usize = 25;
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.2
+
+Documentation and packaging; no code changes.
+
+* README: the install line said `remoteid = "0.1"`, so projects copying it
+  got the release without trust verdicts or DRIP verification. It now says
+  0.2, and lists `trust` and the `verify` feature.
+* New `docs/integration.md`: features and their dependencies, the API to
+  depend on, MSRV, versioning. Its example runs as a doctest.
+* `docs/python.md`: install from the GitHub release wheels until the PyPI
+  project is published.
+
 ## 0.2.1
 
 Fixes from an independent review of 0.2.0. Some verdicts change.

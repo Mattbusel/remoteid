@@ -1,8 +1,11 @@
 # Python
 
 ```text
-pip install remoteid
+pip install remoteid --find-links https://github.com/Mattbusel/remoteid/releases/expanded_assets/v0.2.2
 ```
+
+The wheels are attached to each GitHub release. The PyPI project is not
+published yet; once it is, `pip install remoteid` is enough.
 
 abi3 wheels for CPython 3.10 and later on Linux (x86_64, aarch64), macOS
 (x86_64, arm64) and Windows (x86_64). The source is `python/` in this
