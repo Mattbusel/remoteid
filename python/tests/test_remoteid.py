@@ -52,7 +52,10 @@ def track(name, **kw):
 
 
 def test_version():
-    assert remoteid.__version__ == "0.2.1"
+    # The wheel reports the version it was built as, which follows pyproject.toml.
+    with open(os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")) as f:
+        expected = next(line.split('"')[1] for line in f if line.startswith("version = "))
+    assert remoteid.__version__ == expected
 
 
 def test_decode_frame_and_vendor_element():
