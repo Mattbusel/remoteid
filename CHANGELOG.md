@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.3
+
+Python package fixes; the Rust crate is unchanged.
+
+* `Tracker.auto_expire` was exposed to Python by mistake (an internal
+  helper inside the `#[pymethods]` block). It is private again; expiry
+  still runs on its own inside `ingest`, and `Tracker.expire` is the
+  public call.
+* The type stubs (`py.typed`) now match the module: `Tracker(...)` is
+  described by `__new__` (mypy reported every keyword argument as
+  unknown), `Tracker` and `Verdict` are `@final`, `__all__` is declared,
+  and the `Address` alias, which never existed at runtime, is private
+  (`_Address`). CI runs `mypy.stubtest` against the built wheel.
+
 ## 0.2.2
 
 Documentation and packaging; no code changes.

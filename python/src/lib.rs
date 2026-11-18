@@ -439,6 +439,16 @@ struct Tracker {
     last_expire: u64,
 }
 
+impl Tracker {
+    /// Expires old transmitters at most once a second of the caller's clock.
+    fn auto_expire(&mut self, now: u64) {
+        if now.saturating_sub(self.last_expire) >= 1_000 || now < self.last_expire {
+            self.last_expire = now;
+            self.inner.expire(now);
+        }
+    }
+}
+
 #[pymethods]
 impl Tracker {
     #[new]
@@ -493,13 +503,6 @@ impl Tracker {
             use_system_clock,
             last_expire: 0,
         })
-    }
-
-    fn auto_expire(&mut self, now: u64) {
-        if now.saturating_sub(self.last_expire) >= 1_000 || now < self.last_expire {
-            self.last_expire = now;
-            self.inner.expire(now);
-        }
     }
 
     /// ingest(data, transport="auto", address=None, now_ms=None, unix_ms=None, rssi=None)

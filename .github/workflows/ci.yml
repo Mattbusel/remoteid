@@ -106,3 +106,8 @@ jobs:
           python -m pip install -q pytest
           python -m pip install -q python/dist/*.whl
           cd python/tests && python -m pytest -q .
+      - name: Check the type stubs against the built module
+        shell: bash
+        run: |
+          python -m pip install -q mypy
+          cd python/tests && python -m mypy.stubtest remoteid
