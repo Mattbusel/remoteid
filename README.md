@@ -1,8 +1,10 @@
-# remoteid
+# remoteid: a drone's Remote ID is a claim, not a proof
 
 [![crates.io](https://img.shields.io/crates/v/remoteid.svg)](https://crates.io/crates/remoteid)
 [![docs.rs](https://docs.rs/remoteid/badge.svg)](https://docs.rs/remoteid)
 [![CI](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml)
+
+Drones in US airspace broadcast who they are, where they are and where the pilot stands, and nothing requires that broadcast to be signed: authentication is an optional message in the ASTM format, and the IETF's drone ID requirements put it plainly, "even the most basic datum, the UAS ID itself, can be merely an unsubstantiated claim" ([RFC 9153](https://www.rfc-editor.org/rfc/rfc9153)). A receiver that only decodes repeats whatever the air told it. remoteid checks DRIP (RFC 9575) signatures when they are present and grades every transmitter Authenticated, Plausible, Suspicious or Spoofed, with the reasons. Its decoder is checked field by field against the Open Drone ID reference C library, which now links it as the Rust receiver ([opendroneid-core-c #114](https://github.com/opendroneid/opendroneid-core-c/pull/114)).
 
 Drone Remote ID for Rust. It decodes and encodes the broadcast messages of
 **ASTM F3411-22a** and **ASD-STAN EN 4709-002** (the FAA and EU Remote ID
