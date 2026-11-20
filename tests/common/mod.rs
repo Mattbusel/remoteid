@@ -158,71 +158,11 @@ pub fn ble_ll_adv(pkt: &[u8]) -> Option<([u8; 6], Vec<u8>)> {
     }
 }
 
-/// One Remote ID frame out of a capture, ready for the tracker.
-pub struct RidFrame {
-    pub time_us: u64,
-    pub transmitter: remoteid::Transmitter,
-    pub transport: remoteid::Transport,
-    pub counter: u8,
-    pub payload: Vec<u8>,
-    pub beacon: Option<remoteid::wifi::BeaconInfo>,
-}
-
-/// Every Remote ID frame of a capture (Wi-Fi radiotap or bare 802.11,
-/// Nordic BLE sniffer, or BLE link layer), in capture order.
-pub fn rid_frames(name: &str) -> Vec<RidFrame> {
-    use remoteid::{ble, wifi, Transmitter, Transport};
-    let mut out = Vec::new();
-    for (lt, t, pkt) in read_capture(name) {
-        let ble_frame = |addr: [u8; 6], adv: &[u8]| {
-            ble::find_in_advertising_data(adv).map(|rid| RidFrame {
-                time_us: t,
-                transmitter: Transmitter::Ble(addr),
-                transport: if rid.payload.first().is_some_and(|b| b >> 4 == 0xF) {
-                    Transport::Bluetooth5
-                } else {
-                    Transport::Bluetooth4
-                },
-                counter: rid.counter,
-                payload: rid.payload.to_vec(),
-                beacon: None,
-            })
-        };
-        let f = match lt {
-            105 | 127 => {
-                let frame = if lt == 127 {
-                    match wifi::strip_radiotap(&pkt) {
-                        Ok(f) => f,
-                        Err(_) => continue,
-                    }
-                } else {
-                    &pkt[..]
-                };
-                match wifi::parse_frame(frame) {
-                    Ok(rid) => Some(RidFrame {
-                        time_us: t,
-                        transmitter: Transmitter::Wifi(rid.source),
-                        transport: match rid.kind {
-                            wifi::WifiKind::Beacon => Transport::WifiBeacon,
-                            wifi::WifiKind::Nan => Transport::WifiNan,
-                        },
-                        counter: rid.counter,
-                        payload: rid.payload.to_vec(),
-                        beacon: wifi::beacon_info(frame),
-                    }),
-                    Err(_) => None,
-                }
-            }
-            251 => ble_ll_adv(&pkt).and_then(|(a, adv)| ble_frame(a, &adv)),
-            272 => match nordic_ble_adv(&pkt) {
-                Some((a, adv, true)) => ble_frame(a, &adv),
-                _ => None,
-            },
-            _ => None,
-        };
-        out.extend(f);
-    }
-    out
+/// Every Remote ID frame of a capture, read by the library's
+/// [`remoteid::capture`] module (the same code the replay CLI uses).
+pub fn rid_frames(name: &str) -> Vec<remoteid::capture::CapturedFrame> {
+    let bytes = std::fs::read(resolve(name)).unwrap();
+    remoteid::capture::frames(&bytes).unwrap()
 }
 
 /// Feeds a capture through a tracker, with the capture clock as both the
@@ -233,21 +173,9 @@ pub fn track(name: &str, utc: bool) -> remoteid::Tracker {
 
 /// [`track`] with trust settings.
 pub fn track_with(name: &str, utc: bool, trust: remoteid::TrustConfig) -> remoteid::Tracker {
-    let mut tracker = remoteid::Tracker::new(remoteid::TrackerConfig {
-        timeout: u64::MAX,
+    let config = remoteid::TrackerConfig {
         trust,
         ..remoteid::TrackerConfig::default()
-    });
-    for f in rid_frames(name) {
-        let ms = f.time_us / 1000;
-        let mut obs = remoteid::Observation::new(f.transport, Some(f.counter), &f.payload, ms);
-        if utc {
-            obs = obs.with_unix_ms(ms);
-        }
-        if let Some(b) = f.beacon {
-            obs = obs.with_beacon(b);
-        }
-        tracker.observe(f.transmitter, &obs);
-    }
-    tracker
+    };
+    remoteid::capture::track(&rid_frames(name), config, utc)
 }

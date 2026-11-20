@@ -1,0 +1,13 @@
+# Replay adapter: dougborg/AirHound. Build with
+#   AIRHOUND=<checkout> cargo run --release -- CAPTURE
+# after pointing the path below at the checkout (run_all.sh does that).
+[package]
+name = "airhound-replay"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+airhound = { path = "AIRHOUND_SRC", default-features = false, features = ["board-host"] }
+
+[workspace]

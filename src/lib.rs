@@ -79,12 +79,16 @@ pub mod aircraft_json;
 #[cfg(feature = "verify")]
 pub mod auth;
 pub mod ble;
+#[cfg(feature = "std")]
+pub mod capture;
 pub mod drip;
 mod error;
 pub mod france;
 pub mod geo;
 mod message;
 mod pack;
+#[cfg(feature = "std")]
+pub mod replay;
 pub mod ridf;
 #[cfg(feature = "std")]
 mod tracker;

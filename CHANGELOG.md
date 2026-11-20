@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.3.0
+
+**Why:** open-source Remote ID receivers believe spoofers. Replayed
+through eight of them (14 to 2,479 stars), 10 spoofed Wi-Fi transmitters
+from two public tools were flagged 0 times and shown as real drones 62
+times out of 80 (docs/receivers.md). Trust verdicts in a library change
+nothing until a receiver's CI fails when it accepts a spoofer, so 0.3
+ships the gate.
+
+* New `remoteid-replay` binary (feature `cli`): `run` replays the bundled
+  corpus (12 spoofed transmitters from cyber-defence-campus/droneRemoteIDSpoofer
+  and jjshoots/RemoteIDSpoofer, plus the Open Drone ID sample captures of a
+  real transmitter) through any receiver command that prints JSON, and
+  exits 1 when a spoofed transmitter is accepted, when a real one is
+  flagged, when the receiver crashes, or when it shows nothing at all. A
+  report without a verdict counts as accepted. Also `score` (saved
+  output), `verdicts` (remoteid's own verdicts for pcap, pcapng or RIDF),
+  `frames` (raw frames as JSON lines or RIDF) and `corpus`.
+* New GitHub Action (`action.yml`): `uses: Mattbusel/remoteid@v0.3.0`
+  with `receiver:`; the table goes to the job summary.
+* New `capture` module (std): pcap (both byte orders, micro and
+  nanosecond), pcapng (interface timestamp resolution) and RIDF in,
+  `CapturedFrame`s and a replayed `Tracker` out; radiotap, bare 802.11,
+  BLE link layer (with and without PHDR) and Nordic BLE sniffer link
+  types. Malformed files return `CaptureError`, never panic (new fuzz
+  target `capture`). `to_ridf` writes frames as RIDF for receivers that do
+  not read pcap. The test suite now reads its captures through this module.
+* New `replay` module (std): `expected` (transmitters of a capture with
+  every UAS ID they sent), `Report::parse` (one receiver output line),
+  `score`, `Totals`, `Gate`.
+* `tools/receivers`: the adapters that ran each receiver's own decode path
+  for docs/receivers.md, including a host build of ESP32 Arduino scanner
+  firmware.
+* The crate now ships the corpus captures (about 860 KB) for the binary;
+  the package uses an `include` list instead of `exclude`.
+* Python package: version follows the crate; its API is unchanged.
+
+The `no_std` core is unchanged: `capture`, `replay` and the binary need
+`std`.
+
 ## 0.2.3
 
 Python package fixes; the Rust crate is unchanged.

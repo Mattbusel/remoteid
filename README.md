@@ -1,15 +1,53 @@
-# remoteid: a drone's Remote ID is a claim, not a proof
+# remoteid: your Remote ID receiver believes spoofers
 
 [![crates.io](https://img.shields.io/crates/v/remoteid.svg)](https://crates.io/crates/remoteid)
 [![docs.rs](https://docs.rs/remoteid/badge.svg)](https://docs.rs/remoteid)
 [![CI](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml)
+
+**Your Remote ID receiver believes spoofers.** We replayed 10 fake
+transmitters, made by the source code of two public spoofing tools (a
+laptop script and a five dollar ESP8266 sketch), through eight open-source
+receivers, 14 to 2,479 GitHub stars. Not one transmitter was flagged by any
+of them. 62 of the 80 receiver and transmitter pairs went on the map as real
+drones; the rest were not decoded at all. The one receiver with a spoof
+check tests whether the operator is more than 15 km away, and the spoofers
+put the operator next to the drone. One ESP32 scanner reboots on the first
+Wi-Fi NAN frame it hears. Every row, commit and file:line:
+[docs/receivers.md](docs/receivers.md).
+
+remoteid flags all 12 spoofed transmitters of the corpus (10 Wi-Fi, 2
+Bluetooth) and passes both real captures, and still flags all 12 with its
+spoofer fingerprints turned off. A decoder that cannot tell you that is a
+parser, not a receiver.
+
+Test yours. `remoteid-replay` feeds the spoof corpus and real captures
+through any receiver that prints JSON and **fails when it accepts a spoofed
+transmitter**:
+
+```sh
+cargo install remoteid --features cli
+remoteid-replay run --receiver "python my_receiver.py --pcap {capture}"
+```
+
+```yaml
+# GitHub Actions: the job fails when your receiver believes a spoofer
+- uses: Mattbusel/remoteid@v0.3.0
+  with:
+    receiver: python my_receiver.py --pcap {capture}
+```
+
+Contract, options and the action: [docs/replay.md](docs/replay.md).
+
+## What it is
 
 Drones in US airspace broadcast who they are, where they are and where the pilot stands, and nothing requires that broadcast to be signed: authentication is an optional message in the ASTM format, and the IETF's drone ID requirements put it plainly, "even the most basic datum, the UAS ID itself, can be merely an unsubstantiated claim" ([RFC 9153](https://www.rfc-editor.org/rfc/rfc9153)). A receiver that only decodes repeats whatever the air told it. remoteid checks DRIP (RFC 9575) signatures when they are present and grades every transmitter Authenticated, Plausible, Suspicious or Spoofed, with the reasons. Its decoder is checked field by field against the Open Drone ID reference C library, which now links it as the Rust receiver ([opendroneid-core-c #114](https://github.com/opendroneid/opendroneid-core-c/pull/114)).
 
 Drone Remote ID for Rust. It decodes and encodes the broadcast messages of
 **ASTM F3411-22a** and **ASD-STAN EN 4709-002** (the FAA and EU Remote ID
 formats, implemented in C by [Open Drone ID](https://github.com/opendroneid)),
-and pulls them out of real radio frames:
+pulls them out of real radio frames, and judges whether to believe them
+(`trust`: spoofed, suspicious, plausible or DRIP-authenticated, with the
+reasons):
 
 | Transport | Function |
 |---|---|
@@ -18,25 +56,19 @@ and pulls them out of real radio frames:
 | Wi-Fi Beacon vendor element | `wifi::parse_frame`, `wifi::find_in_elements` |
 | Wi-Fi NAN service discovery | `wifi::parse_frame`, `wifi::parse_nan_action` |
 | Monitor mode captures | `wifi::strip_radiotap` (drops the FCS too) |
+| pcap, pcapng and RIDF files | `capture::frames`, `capture::track` (std) |
 | French beacon (pre-EU format) | `france::find_in_elements` |
 
-Pure Rust, no dependencies, `no_std`, no allocation outside the optional
-`Tracker`, `#![forbid(unsafe_code)]`. It builds for microcontrollers
-(`thumbv7em-none-eabihf`) and for the browser (`wasm32-unknown-unknown`).
-
-## Why
-
-Rust Remote ID receivers on GitHub (detectors, ground stations, SDR
-tools) each hand-roll their own decoder, or link the C library through FFI,
-which needs a C toolchain and bindgen and does not build for wasm. This
-crate is the decoder they can share, checked field by field against the C
-reference.
+The core is pure Rust, no dependencies, `no_std`, no allocation outside the
+optional `Tracker`, `#![forbid(unsafe_code)]`. It builds for
+microcontrollers (`thumbv7em-none-eabihf`) and for the browser
+(`wasm32-unknown-unknown`).
 
 ## Use
 
 ```toml
 [dependencies]
-remoteid = "0.2"
+remoteid = "0.3"
 ```
 
 Bluetooth (for example service data from `btleplug` for UUID `0xFFFA`):

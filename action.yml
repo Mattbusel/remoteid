@@ -1,0 +1,70 @@
+name: Remote ID spoof replay
+description: >-
+  Replays captures of public Remote ID spoofers and of real transmitters
+  through your receiver and fails the job when it shows a spoofed
+  transmitter as real.
+branding:
+  icon: shield
+  color: red
+inputs:
+  receiver:
+    description: >-
+      Command that reads one capture ({capture} is replaced by its path) and
+      prints one JSON object per transmitter it shows, for example
+      {"mac": "...", "uas_id": "...", "verdict": "spoofed"}. A line with no
+      verdict counts as accepted. Empty: remoteid itself is the receiver.
+    required: false
+    default: ""
+  link:
+    description: Captures to replay, wifi, ble or all.
+    required: false
+    default: all
+  args:
+    description: >-
+      More remoteid-replay options, for example "--legit field.pcap
+      --fail-on-missed".
+    required: false
+    default: ""
+  version:
+    description: >-
+      remoteid version that provides remoteid-replay, or "local" to use the
+      remoteid-replay already on PATH.
+    required: false
+    default: "0.3.0"
+outputs:
+  result:
+    description: The replay result as JSON.
+    value: ${{ steps.replay.outputs.result }}
+runs:
+  using: composite
+  steps:
+    - name: Install remoteid-replay
+      shell: bash
+      env:
+        RID_VERSION: ${{ inputs.version }}
+      run: |
+        if [ "$RID_VERSION" = local ]; then
+          remoteid-replay --version
+        elif ! command -v remoteid-replay >/dev/null || ! remoteid-replay --version | grep -qx "remoteid-replay $RID_VERSION"; then
+          cargo install remoteid --version "$RID_VERSION" --features cli --locked --quiet
+        fi
+    - name: Replay
+      id: replay
+      shell: bash
+      env:
+        RID_RECEIVER: ${{ inputs.receiver }}
+        RID_LINK: ${{ inputs.link }}
+        RID_ARGS: ${{ inputs.args }}
+      run: |
+        set +e
+        rx=()
+        if [ -n "$RID_RECEIVER" ]; then rx=(--receiver "$RID_RECEIVER"); fi
+        # shellcheck disable=SC2086
+        remoteid-replay run "${rx[@]}" --link "$RID_LINK" --format markdown --details $RID_ARGS > "$RUNNER_TEMP/replay.md"
+        code=$?
+        # shellcheck disable=SC2086
+        remoteid-replay run "${rx[@]}" --link "$RID_LINK" --format json $RID_ARGS > "$RUNNER_TEMP/replay.json"
+        cat "$RUNNER_TEMP/replay.md"
+        cat "$RUNNER_TEMP/replay.md" >> "$GITHUB_STEP_SUMMARY"
+        { echo "result<<RID_EOF"; cat "$RUNNER_TEMP/replay.json"; echo "RID_EOF"; } >> "$GITHUB_OUTPUT"
+        exit $code

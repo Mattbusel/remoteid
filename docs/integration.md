@@ -10,14 +10,15 @@ so replayed captures and live traffic behave the same.
 
 ```toml
 [dependencies]
-remoteid = "0.2"
+remoteid = "0.3"
 ```
 
 | Feature | Default | Adds | Extra dependencies |
 |---|---|---|---|
-| `std` | yes | `Tracker` (per-aircraft state, expiry, trust), `std::error::Error`, `aircraft_json` | none |
+| `std` | yes | `Tracker` (per-aircraft state, expiry, trust), `std::error::Error`, `aircraft_json`, `capture` (pcap, pcapng, RIDF files), `replay` (scoring receivers against known truth) | none |
 | `serde` | no | `Serialize` / `Deserialize` on the decoded types | `serde` (derive, no `std`) |
 | `verify` | no | `auth`: DRIP Ed25519 signature checks | `ed25519-dalek`, `sha3` (both `no_std`, default features off) |
+| `cli` | no | the `remoteid-replay` binary ([replay.md](replay.md)) and its bundled corpus | none |
 
 With default features the crate has no dependencies. With
 `default-features = false` it is `no_std` and never allocates; CI builds it

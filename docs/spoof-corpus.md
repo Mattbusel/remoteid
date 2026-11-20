@@ -46,5 +46,6 @@ cyber-defence-campus tool are not in the corpus yet.
 CI runs the script on Ubuntu and fails if the files change, so the corpus
 stays reproducible from the pinned sources.
 
-Use of the corpus: `tests/trust_corpus.rs` and `python/tests` check the
+Use of the corpus: `remoteid-replay` (docs/replay.md) replays it through any
+receiver and ships it in the crate; `tests/trust_corpus.rs` and `python/tests` check the
 verdicts; `cargo run --example trust_report -- <capture>` prints them.

@@ -1,10 +1,10 @@
 [package]
 name = "remoteid"
-version = "0.2.3"
+version = "0.3.0"
 authors = ["Matt Busel <matt@busel.dev>"]
 edition = "2021"
 rust-version = "1.70"
-description = "Drone Remote ID is an unsigned claim: decode, encode, track and judge it in pure no_std Rust (ASTM F3411-22a, EN 4709-002), with spoof and plausibility verdicts and DRIP RFC 9575 Ed25519 verification."
+description = "Drone Remote ID (ASTM F3411-22a, EN 4709-002) in no_std Rust that does not believe spoofers: decode, track, trust verdicts, DRIP RFC 9575 verification, and a replay gate that fails receivers which accept spoofed transmitters"
 license = "MIT"
 repository = "https://github.com/Mattbusel/remoteid"
 homepage = "https://github.com/Mattbusel/remoteid"
@@ -12,7 +12,20 @@ documentation = "https://docs.rs/remoteid"
 readme = "README.md"
 keywords = ["remote-id", "drone", "uas", "drip", "spoofing"]
 categories = ["aerospace::drones", "aerospace::protocols", "no-std", "parser-implementations", "encoding"]
-exclude = ["tests", ".github", "python", "fuzz", "tools"]
+# The bundled spoof corpus and sample captures ship for remoteid-replay;
+# the test sources, CI, Python package, fuzzers and generators do not.
+include = [
+    "/src/**",
+    "/examples/**",
+    "/docs/**",
+    "/tests/data/spoof/*.pcap",
+    "/tests/data/odid_*",
+    "/tests/data/LICENSE-APACHE-opendroneid",
+    "/Cargo.toml",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]
 
 [features]
 default = ["std"]
@@ -22,6 +35,13 @@ std = []
 serde = ["dep:serde"]
 ## DRIP (RFC 9374 / RFC 9575) signature checks with Ed25519 and cSHAKE128: the `auth` module.
 verify = ["dep:ed25519-dalek", "dep:sha3"]
+## Builds the `remoteid-replay` binary: `cargo install remoteid --features cli`.
+cli = ["std"]
+
+[[bin]]
+name = "remoteid-replay"
+path = "src/bin/remoteid-replay.rs"
+required-features = ["cli"]
 
 [dependencies]
 serde = { version = "1", default-features = false, features = ["derive"], optional = true }
