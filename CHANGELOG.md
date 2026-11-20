@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.2
+
+Documentation and metadata only; no code change.
+
+* README and crates.io description lead with the result: 10 fake drones
+  replayed through the open-source receivers people run, 0 flagged;
+  remoteid flags 10 of 10. If a receiver can't say SPOOFED, it amplifies
+  the attacker.
+* The GitHub Action and docs point at v0.3.2.
+
 ## 0.3.1
 
 Documentation and metadata only; no code change.

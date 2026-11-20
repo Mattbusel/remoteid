@@ -30,7 +30,7 @@ inputs:
       remoteid version that provides remoteid-replay, or "local" to use the
       remoteid-replay already on PATH.
     required: false
-    default: "0.3.1"
+    default: "0.3.2"
 outputs:
   result:
     description: The replay result as JSON.

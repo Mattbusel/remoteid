@@ -1,7 +1,7 @@
 # Python
 
 ```text
-pip install remoteid --find-links https://github.com/Mattbusel/remoteid/releases/expanded_assets/v0.3.1
+pip install remoteid --find-links https://github.com/Mattbusel/remoteid/releases/expanded_assets/v0.3.2
 ```
 
 The wheels are attached to each GitHub release. The PyPI project is not

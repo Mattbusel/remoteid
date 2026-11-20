@@ -57,7 +57,7 @@ Exit status: 0 pass, 1 the gate failed, 2 usage or I/O error.
 ## GitHub Action
 
 ```yaml
-- uses: Mattbusel/remoteid@v0.3.1
+- uses: Mattbusel/remoteid@v0.3.2
   with:
     receiver: python my_receiver.py --pcap {capture}
     link: wifi

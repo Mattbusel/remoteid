@@ -1,19 +1,25 @@
-# remoteid: Remote ID is a claim, not a fact
+# remoteid: if your receiver can't say SPOOFED, it is a fake-drone amplifier
 
 [![crates.io](https://img.shields.io/crates/v/remoteid.svg)](https://crates.io/crates/remoteid)
 [![docs.rs](https://docs.rs/remoteid/badge.svg)](https://docs.rs/remoteid)
 [![CI](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml)
 
-**Most Remote ID receivers believe whatever the air tells them.** We built
-10 fake drones from the public source code of two spoofing tools (a laptop
-script and a five dollar ESP8266 sketch) and replayed them through eight
-open-source receivers, 14 to 2,479 GitHub stars:
+**We threw 10 fake drones at the open-source Remote ID receivers people
+actually run. Not one raised a flag.**
+
+Your drone detector believes whatever the air tells it. Remote ID is a
+broadcast, not a proof: any serial number, any position, any pilot
+location, typed into a laptop script or a five dollar ESP8266. We built the
+10 fakes from the public source of two spoofing tools and replayed them
+through eight open-source receivers, 14 to 2,479 GitHub stars. If your
+receiver can't say SPOOFED, it is a fake-drone amplifier: it takes an
+attacker's broadcast and puts it on a security screen as a real aircraft.
 
 | | Spoofed transmitters flagged | Shown to the user as real drones |
 |---|---|---|
 | Eight open-source receivers, combined | **0 of 10** | **62 of 80** receiver and transmitter pairs |
 | The one receiver with a spoof check | 0 of 10 | 7 of 10 (it checks for an operator more than 15 km away; the spoofers put the operator next to the drone) |
-| **remoteid 0.3** | **10 of 10** | **0** (real captures: 2 of 2 shown, none flagged) |
+| **remoteid** | **10 of 10** | **0** (real captures: 2 of 2 shown, none flagged) |
 
 Every row, commit and file:line, with the command that reproduces it:
 [docs/receivers.md](docs/receivers.md). Of the 18 pairs that did not
@@ -50,7 +56,7 @@ remoteid-replay run --receiver "python my_receiver.py --pcap {capture}"
 
 ```yaml
 # GitHub Actions: the job fails when your receiver believes a spoofer
-- uses: Mattbusel/remoteid@v0.3.1
+- uses: Mattbusel/remoteid@v0.3.2
   with:
     receiver: python my_receiver.py --pcap {capture}
 ```
