@@ -1,28 +1,47 @@
-# remoteid: your Remote ID receiver believes spoofers
+# remoteid: Remote ID is a claim, not a fact
 
 [![crates.io](https://img.shields.io/crates/v/remoteid.svg)](https://crates.io/crates/remoteid)
 [![docs.rs](https://docs.rs/remoteid/badge.svg)](https://docs.rs/remoteid)
 [![CI](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml)
 
-**Your Remote ID receiver believes spoofers.** We replayed 10 fake
-transmitters, made by the source code of two public spoofing tools (a
-laptop script and a five dollar ESP8266 sketch), through eight open-source
-receivers, 14 to 2,479 GitHub stars. Not one transmitter was flagged by any
-of them. 62 of the 80 receiver and transmitter pairs went on the map as real
-drones; the rest were not decoded at all. The one receiver with a spoof
-check tests whether the operator is more than 15 km away, and the spoofers
-put the operator next to the drone. One ESP32 scanner reboots on the first
-Wi-Fi NAN frame it hears. Every row, commit and file:line:
-[docs/receivers.md](docs/receivers.md).
+**Most Remote ID receivers believe whatever the air tells them.** We built
+10 fake drones from the public source code of two spoofing tools (a laptop
+script and a five dollar ESP8266 sketch) and replayed them through eight
+open-source receivers, 14 to 2,479 GitHub stars:
 
-remoteid flags all 12 spoofed transmitters of the corpus (10 Wi-Fi, 2
-Bluetooth) and passes both real captures, and still flags all 12 with its
-spoofer fingerprints turned off. A decoder that cannot tell you that is a
-parser, not a receiver.
+| | Spoofed transmitters flagged | Shown to the user as real drones |
+|---|---|---|
+| Eight open-source receivers, combined | **0 of 10** | **62 of 80** receiver and transmitter pairs |
+| The one receiver with a spoof check | 0 of 10 | 7 of 10 (it checks for an operator more than 15 km away; the spoofers put the operator next to the drone) |
+| **remoteid 0.3** | **10 of 10** | **0** (real captures: 2 of 2 shown, none flagged) |
 
-Test yours. `remoteid-replay` feeds the spoof corpus and real captures
-through any receiver that prints JSON and **fails when it accepts a spoofed
-transmitter**:
+Every row, commit and file:line, with the command that reproduces it:
+[docs/receivers.md](docs/receivers.md). Of the 18 pairs that did not
+appear as drones, none were caught: they were never decoded. One ESP32
+scanner reboots on the first Wi-Fi NAN frame it hears.
+
+The hard part is not the format. The FAA rule makes drones broadcast who
+they are and where the pilot stands, and nothing makes that broadcast
+signed or checked. Authentication is an optional message, and the IETF says
+it plainly: "even the most basic datum, the UAS ID itself, can be merely an
+unsubstantiated claim" ([RFC 9153](https://www.rfc-editor.org/rfc/rfc9153)).
+A receiver that only decodes is a parser with a map. It puts any serial
+number anyone types into a five dollar board on a security dashboard, as a
+real aircraft, with a real pilot location. If your product shows a drone
+without saying whether to believe it, it is repeating the attacker.
+
+remoteid takes the other side:
+
+* **Every transmitter gets a verdict**: Authenticated, Plausible,
+  Suspicious or Spoofed, with the reasons. No verdict is not an option.
+* **DRIP signatures are checked** (IETF RFC 9575, Ed25519) when present,
+  and Authenticated requires a receiver clock, so a replayed signature does
+  not pass.
+* **It still flags all 12 corpus spoofers with its spoofer fingerprints
+  turned off**, so the result is not a rule written against two tools.
+* **Your CI can fail on it.** `remoteid-replay` feeds the spoof corpus and
+  real captures through any receiver that prints JSON and exits 1 when it
+  accepts a spoofed transmitter:
 
 ```sh
 cargo install remoteid --features cli
@@ -31,16 +50,23 @@ remoteid-replay run --receiver "python my_receiver.py --pcap {capture}"
 
 ```yaml
 # GitHub Actions: the job fails when your receiver believes a spoofer
-- uses: Mattbusel/remoteid@v0.3.0
+- uses: Mattbusel/remoteid@v0.3.1
   with:
     receiver: python my_receiver.py --pcap {capture}
 ```
 
 Contract, options and the action: [docs/replay.md](docs/replay.md).
 
-## What it is
+## Used by
 
-Drones in US airspace broadcast who they are, where they are and where the pilot stands, and nothing requires that broadcast to be signed: authentication is an optional message in the ASTM format, and the IETF's drone ID requirements put it plainly, "even the most basic datum, the UAS ID itself, can be merely an unsubstantiated claim" ([RFC 9153](https://www.rfc-editor.org/rfc/rfc9153)). A receiver that only decodes repeats whatever the air told it. remoteid checks DRIP (RFC 9575) signatures when they are present and grades every transmitter Authenticated, Plausible, Suspicious or Spoofed, with the reasons. Its decoder is checked field by field against the Open Drone ID reference C library, which now links it as the Rust receiver ([opendroneid-core-c #114](https://github.com/opendroneid/opendroneid-core-c/pull/114)).
+* [dougborg/AirHound](https://github.com/dougborg/AirHound), an RF
+  surveillance detection toolkit with ESP32 firmware, decodes Remote ID
+  with remoteid (`default-features = false`).
+* Listed as the Rust implementation in the
+  [Open Drone ID reference C library](https://github.com/opendroneid/opendroneid-core-c#rust),
+  whose decoder this crate is checked against field by field.
+
+## What it is
 
 Drone Remote ID for Rust. It decodes and encodes the broadcast messages of
 **ASTM F3411-22a** and **ASD-STAN EN 4709-002** (the FAA and EU Remote ID
@@ -180,8 +206,9 @@ project (features, the API to depend on, MSRV, versioning).
 
 ## Status
 
-0.2: the message layer and transports are complete and checked against the
-reference; trust verdicts and DRIP verification were added in 0.2. Not included yet: MAVLink `OPEN_DRONE_ID_*` conversion (the
+0.3: the message layer and transports are complete and checked against the
+reference; trust verdicts and DRIP verification came in 0.2, the replay gate
+and GitHub Action in 0.3. Not included yet: MAVLink `OPEN_DRONE_ID_*` conversion (the
 MAVLink messages carry the same 25 byte payloads, so `Message::decode` works
 on their data fields directly) and Network Remote ID (ASTM F3411 NetRID
 JSON).

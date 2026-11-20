@@ -1,16 +1,16 @@
 [package]
 name = "remoteid"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Matt Busel <matt@busel.dev>"]
 edition = "2021"
 rust-version = "1.70"
-description = "Drone Remote ID (ASTM F3411-22a, EN 4709-002) in no_std Rust that does not believe spoofers: decode, track, trust verdicts, DRIP RFC 9575 verification, and a replay gate that fails receivers which accept spoofed transmitters"
+description = "Most Remote ID receivers believe whatever the air tells them; this one does not. Drone Remote ID (ASTM F3411-22a, EN 4709-002) in no_std Rust: decode, track, DRIP RFC 9575 signature checks, a spoofed/suspicious/plausible/authenticated verdict for every transmitter, and a CI gate that fails receivers which accept spoofers (open receivers: 0 of 10 spoofers flagged; remoteid: 10 of 10)"
 license = "MIT"
 repository = "https://github.com/Mattbusel/remoteid"
 homepage = "https://github.com/Mattbusel/remoteid"
 documentation = "https://docs.rs/remoteid"
 readme = "README.md"
-keywords = ["remote-id", "drone", "uas", "drip", "spoofing"]
+keywords = ["remote-id", "drone", "spoofing", "drip", "counter-uas"]
 categories = ["aerospace::drones", "aerospace::protocols", "no-std", "parser-implementations", "encoding"]
 # The bundled spoof corpus and sample captures ship for remoteid-replay;
 # the test sources, CI, Python package, fuzzers and generators do not.

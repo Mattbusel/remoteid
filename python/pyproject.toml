@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "remoteid"
-version = "0.3.0"
+version = "0.3.1"
 description = "Drone Remote ID (ASTM F3411, EN 4709-002) decoding and trust verdicts: spoof and plausibility checks, DRIP (RFC 9575) signature verification, tar1090 aircraft.json"
 readme = "DESCRIPTION.md"
 license = { text = "MIT" }

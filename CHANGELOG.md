@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+Documentation and metadata only; no code change.
+
+* README opens with the replay result as a table: eight open-source
+  receivers flagged 0 of 10 spoofed transmitters and showed 62 of 80
+  receiver and transmitter pairs as real drones; remoteid flagged 10 of 10.
+* New "Used by" section (AirHound; the Open Drone ID reference C library
+  lists this crate as its Rust implementation).
+* crates.io description and keywords say what the crate refuses to do.
+* The GitHub Action and docs point at v0.3.1.
+
 ## 0.3.0
 
 **Why:** open-source Remote ID receivers believe spoofers. Replayed
