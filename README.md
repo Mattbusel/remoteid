@@ -90,6 +90,9 @@ reasons):
 | Monitor mode captures | `wifi::strip_radiotap` (drops the FCS too) |
 | pcap, pcapng and RIDF files | `capture::frames`, `capture::track` (std) |
 | French beacon (pre-EU format) | `france::find_in_elements` |
+| DJI DroneID, OcuSync (from an SDR demodulator) | `dji::FlightInfo::decode` |
+| DJI DroneID, AntSDR TCP reports | `dji::antsdr::next_frame`, `dji::antsdr::Report` |
+| DJI DroneID, Wi-Fi beacon element | `dji::find_in_elements` |
 
 The core is pure Rust, no dependencies, `no_std`, no allocation outside the
 optional `Tracker`, `#![forbid(unsafe_code)]`. It builds for
@@ -210,11 +213,63 @@ data, [docs/format.md](docs/format.md) for the byte layouts, and
 [docs/integration.md](docs/integration.md) for using it inside another
 project (features, the API to depend on, MSRV, versioning).
 
+## DJI DroneID
+
+Many of the drones a detector sees are DJI, and DJI aircraft send their
+own DroneID frames, on models sold before Remote ID and alongside it on
+newer ones. A
+detector that only reads ASTM Remote ID misses the pilot position DroneID
+carries. The `dji` module decodes it:
+
+* **OcuSync** (Mini 2, Mavic Air 2, Air 2S, Mavic 3 and most models since
+  2019): give `FlightInfo::decode` the 91 bytes your SDR demodulator
+  produced (for example the NDSS 2023 receiver from Ruhr University Bochum).
+  The CRC is checked, so a demodulation error is an `Err`, not a drone in
+  the wrong place.
+* **AntSDR** DroneID firmware: `antsdr::next_frame` splits the TCP stream,
+  `antsdr::Report` decodes each report.
+* **Wi-Fi** DJI models: `dji::find_in_elements` reads the beacon vendor
+  element (OUI `26:37:12`), flight telemetry and the user entered flight
+  purpose.
+
+```rust
+use remoteid::dji::{self, FlightInfo, WifiDroneId};
+use remoteid::{Tracker, Transmitter};
+
+fn on_ocusync(tracker: &mut Tracker, payload: &[u8], now_ms: u64) {
+    let Ok(f) = FlightInfo::decode(payload) else { return };
+    println!(
+        "{} {:?} at {:?}, pilot at {:?}",
+        f.product_name().unwrap_or("DJI"),
+        f.serial_str(),
+        f.position(),
+        f.pilot_position(),
+    );
+    // Same tracker, trust verdicts and aircraft.json as Remote ID aircraft.
+    tracker.ingest_dji(Transmitter::Other(f.key()), &f, now_ms);
+}
+
+fn on_beacon(tagged_params: &[u8]) {
+    if let Some(WifiDroneId::FlightInfo(f)) = dji::find_in_elements(tagged_params) {
+        println!("{:?} home {:?}", f.serial_str(), f.home_position());
+    }
+}
+```
+
+What it gets right: coordinates are converted exactly (radians times 1e7;
+the usual `/ 174533` shortcut is off by about 2 m), positions of 0, 0 are
+`None` instead of a drone in the Gulf of Guinea, encrypted serials come back
+as `None` instead of garbage text, and fields whose units nobody has
+established publicly (altitude, height, velocities, state flags) are kept
+raw instead of guessed. Tested against payloads demodulated from the NDSS
+2023 sample captures: the CRC verdict matches the reference receiver on all
+9 frames, and every field of the Mavic Air 2 frame is checked.
+
 ## Status
 
 0.3: the message layer and transports are complete and checked against the
 reference; trust verdicts and DRIP verification came in 0.2, the replay gate
-and GitHub Action in 0.3. Not included yet: MAVLink `OPEN_DRONE_ID_*` conversion (the
+and GitHub Action in 0.3, DJI DroneID decoding in 0.3.3. Not included yet: MAVLink `OPEN_DRONE_ID_*` conversion (the
 MAVLink messages carry the same 25 byte payloads, so `Message::decode` works
 on their data fields directly) and Network Remote ID (ASTM F3411 NetRID
 JSON).
@@ -224,4 +279,7 @@ JSON).
 MIT. The sample captures in `tests/data` come from
 [opendroneid/wireshark-dissector](https://github.com/opendroneid/wireshark-dissector)
 under the Apache License 2.0 (`tests/data/LICENSE-APACHE-opendroneid`); they
-are not part of the published crate.
+are not part of the published crate. The DJI DroneID test payloads in
+`tests/data/dji_droneid_payloads.txt` were demodulated from the sample
+captures of [RUB-SysSec/DroneSecurity](https://github.com/RUB-SysSec/DroneSecurity)
+with its offline receiver; they are not part of the published crate either.

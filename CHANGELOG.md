@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.3.3
+
+**Why:** a Remote ID only receiver misses DJI's own DroneID, which carries
+the pilot position on DJI models with and without Remote ID. Additive; no
+API change.
+
+* New `dji` module (no_std, no dependencies, always built):
+  * `FlightInfo::decode` decodes the 91 byte OcuSync DroneID payload an SDR
+    demodulator produces and checks its CRC-16 (`crc16`);
+    `decode_unchecked` skips the check. Serial, aircraft, home and pilot
+    positions (exact radians to degrees), GPS time, yaw, product type
+    (`product_name`) and flight UUID. Altitude, height, velocities and
+    state flags are kept raw because their units are not established in
+    public sources; `altitude_m` / `height_m` apply the feet reading of
+    the NDSS 2023 reference receiver.
+  * `find_in_elements` / `parse_vendor_element` read the DJI Wi-Fi beacon
+    element (OUI `26:37:12`): flight telemetry (record versions 1 and 2)
+    and the user entered flight purpose.
+  * `antsdr::next_frame` and `antsdr::Report` read the decoded reports an
+    AntSDR with DroneID firmware streams over TCP.
+  * `FlightInfo::messages` builds the equivalent Remote ID Basic ID,
+    Location and System messages; `FlightInfo::key` gives a stable
+    transmitter key from the serial.
+* New `Tracker::ingest_dji`: DJI aircraft are tracked, expired and graded
+  by `trust` like Remote ID aircraft.
+* New `Error::ChecksumMismatch` (the enum is `non_exhaustive`).
+* Tests: payloads demodulated from the NDSS 2023 Mini 2 and Mavic Air 2
+  sample captures; the CRC verdict matches the reference receiver on all 9
+  frames and every field of the Mavic Air 2 frame is checked.
+* The GitHub Action, `remoteid-replay` and the Python package are
+  unchanged and stay at 0.3.2.
+
 ## 0.3.2
 
 Documentation and metadata only; no code change.

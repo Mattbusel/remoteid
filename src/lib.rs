@@ -9,7 +9,9 @@
 //!   advertising ([`ble`]),
 //! * Wi-Fi Beacon vendor elements and Wi-Fi NAN service discovery frames
 //!   ([`wifi`]), with or without a radiotap header,
-//! * the French "signalement electronique" beacon format ([`france`]).
+//! * the French "signalement electronique" beacon format ([`france`]),
+//! * DJI DroneID, from OcuSync payloads demodulated by an SDR, AntSDR
+//!   reports, and the DJI Wi-Fi beacon element ([`dji`]).
 //!
 //! Decoded messages can be merged into one record per aircraft ([`UasData`]),
 //! and with the `std` feature a [`Tracker`] keeps those records per
@@ -81,6 +83,7 @@ pub mod auth;
 pub mod ble;
 #[cfg(feature = "std")]
 pub mod capture;
+pub mod dji;
 pub mod drip;
 mod error;
 pub mod france;

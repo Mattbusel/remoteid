@@ -1,10 +1,10 @@
 [package]
 name = "remoteid"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["Matt Busel <matt@busel.dev>"]
 edition = "2021"
 rust-version = "1.70"
-description = "If your receiver can't say SPOOFED, it is a fake-drone amplifier. Open-source Remote ID receivers flagged 0 of 10 spoofed drones; remoteid flags 10 of 10. Drone Remote ID (ASTM F3411-22a, EN 4709-002) in no_std Rust: decode, track, DRIP RFC 9575 signature checks, a verdict on every transmitter, and a CI gate that fails receivers which believe spoofers"
+description = "If your receiver can't say SPOOFED, it is a fake-drone amplifier. Open-source Remote ID receivers flagged 0 of 10 spoofed drones; remoteid flags 10 of 10. Drone Remote ID (ASTM F3411-22a, EN 4709-002) in no_std Rust: decode, track, DRIP RFC 9575 signature checks, a verdict on every transmitter, a CI gate that fails receivers which believe spoofers, and DJI DroneID (OcuSync, AntSDR, Wi-Fi) decode with CRC check"
 license = "MIT"
 repository = "https://github.com/Mattbusel/remoteid"
 homepage = "https://github.com/Mattbusel/remoteid"

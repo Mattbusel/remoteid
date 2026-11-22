@@ -35,6 +35,13 @@ pub enum Error {
         /// Bytes available.
         got: usize,
     },
+    /// A checksum did not match (DJI DroneID payload CRC).
+    ChecksumMismatch {
+        /// Checksum computed over the data.
+        computed: u16,
+        /// Checksum carried in the data.
+        found: u16,
+    },
 }
 
 impl fmt::Display for Error {
@@ -53,6 +60,12 @@ impl fmt::Display for Error {
             Error::NotRemoteId => f.write_str("frame carries no Remote ID payload"),
             Error::BufferTooSmall { need, got } => {
                 write!(f, "output buffer too small: need {need} bytes, got {got}")
+            }
+            Error::ChecksumMismatch { computed, found } => {
+                write!(
+                    f,
+                    "checksum mismatch: computed {computed:#06x}, found {found:#06x}"
+                )
             }
         }
     }

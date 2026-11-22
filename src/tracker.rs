@@ -222,6 +222,36 @@ impl Tracker {
         self.observe(Transmitter::Wifi(rid.source), &obs)
     }
 
+    /// Records a DJI DroneID flight record as the Remote ID messages it is
+    /// equivalent to (see [`crate::dji::FlightInfo::messages`]), so DJI
+    /// aircraft are tracked, expired and graded like any other.
+    ///
+    /// Key the aircraft by what the receiver has: the Wi-Fi source address
+    /// for the beacon element, or [`Transmitter::Other`] chosen by the
+    /// caller (for example a hash of the serial) for OcuSync frames, which
+    /// carry no radio address. Returns `None` when the record holds nothing
+    /// to track (no serial, no fix, no pilot position).
+    pub fn ingest_dji(
+        &mut self,
+        from: Transmitter,
+        info: &crate::dji::FlightInfo,
+        now: u64,
+    ) -> Option<&TrackedUas> {
+        let mut any = false;
+        for msg in info.messages() {
+            if let Ok(raw) = msg.encode() {
+                let obs = Observation::new(Transport::Other, None, &raw, now);
+                self.observe(from, &obs);
+                any = true;
+            }
+        }
+        if any {
+            self.uas.get(&from)
+        } else {
+            None
+        }
+    }
+
     /// Records one frame with everything the receiver knows about it and
     /// updates the transmitter's trust assessment.
     pub fn observe(&mut self, from: Transmitter, obs: &Observation<'_>) -> &TrackedUas {
