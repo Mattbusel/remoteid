@@ -1,8 +1,28 @@
-# remoteid: if your receiver can't say SPOOFED, it is a fake-drone amplifier
+# remoteid
+
+**A five dollar board can broadcast a drone that isn't there, and the
+open-source Remote ID receivers people run believe it. remoteid is the one
+that says SPOOFED.**
+
+![remoteid decoding drone Remote ID broadcasts and grading every transmitter](docs/demo.gif)
+
+[**Live demo**](https://mattbusel.github.io/drone-demos/)
 
 [![crates.io](https://img.shields.io/crates/v/remoteid.svg)](https://crates.io/crates/remoteid)
+[![downloads](https://img.shields.io/crates/d/remoteid.svg)](https://crates.io/crates/remoteid)
 [![docs.rs](https://docs.rs/remoteid/badge.svg)](https://docs.rs/remoteid)
+[![license](https://img.shields.io/crates/l/remoteid.svg)](LICENSE)
 [![CI](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml)
+
+Drone Remote ID (ASTM F3411-22a and ASD-STAN EN 4709-002, the FAA and EU
+formats) in `no_std`, dependency-free, `#![forbid(unsafe_code)]` Rust: it
+pulls the broadcast out of real Bluetooth and Wi-Fi frames, checks DRIP
+(IETF RFC 9575, Ed25519) signatures when present, and hands back a verdict
+on every transmitter instead of a map pin you are expected to trust. Every
+decoded field is checked against the `opendroneid-core-c` reference library
+on the public Open Drone ID sample captures, and CI rebuilds that library
+and re-runs the comparison on every push. It builds for microcontrollers
+(`thumbv7em-none-eabihf`) and the browser (`wasm32-unknown-unknown`).
 
 **We threw 10 fake drones at the open-source Remote ID receivers people
 actually run. Not one raised a flag.**
