@@ -119,6 +119,18 @@ optional `Tracker`, `#![forbid(unsafe_code)]`. It builds for
 microcontrollers (`thumbv7em-none-eabihf`) and for the browser
 (`wasm32-unknown-unknown`).
 
+## How it works: watch the bytes decode
+
+You are watching the real wire bytes of a real frame resolve into the decoded fields, the decode this crate performs. Two pieces: the real 91-byte DJI DroneID OcuSync payload resolving to serial, model, aircraft position AND the pilot phone position with the CRC verifying; and a 25-byte ASTM F3411 Basic ID message resolving to the drone serial. Both decoded by this crate.
+
+![DJI DroneID 91-byte OcuSync payload decoding to serial, model, aircraft and pilot position with the CRC verifying](docs/bit-dji-droneid.gif)
+
+Live: [mattbusel.github.io/drone-demos/bits/dji-droneid](https://mattbusel.github.io/drone-demos/bits/dji-droneid/)
+
+![ASTM F3411 25-byte Basic ID message decoding to the drone serial](docs/bit-f3411-basic-id.gif)
+
+Live: [mattbusel.github.io/drone-demos/bits/f3411-basic-id](https://mattbusel.github.io/drone-demos/bits/f3411-basic-id/)
+
 ## Use
 
 ```toml
