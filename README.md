@@ -14,6 +14,10 @@ that says SPOOFED.**
 [![license](https://img.shields.io/crates/l/remoteid.svg)](LICENSE)
 [![CI](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/remoteid/actions/workflows/ci.yml)
 
+## Watch: 45 seconds, what this actually does
+
+[![Watch the film](docs/film-poster.png)](https://mattbusel.github.io/drone-demos/watch.html)
+
 Drone Remote ID (ASTM F3411-22a and ASD-STAN EN 4709-002, the FAA and EU
 formats) in `no_std`, dependency-free, `#![forbid(unsafe_code)]` Rust: it
 pulls the broadcast out of real Bluetooth and Wi-Fi frames, checks DRIP
