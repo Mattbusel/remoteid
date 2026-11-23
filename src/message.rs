@@ -1153,11 +1153,62 @@ impl System {
     }
 
     /// Operator latitude and longitude, or `None` for 0, 0 (unknown).
+    ///
+    /// This is the raw position regardless of what it means. To tell *where
+    /// the drone launched from* apart from *where the pilot is now*, use
+    /// [`takeoff_position`](Self::takeoff_position),
+    /// [`live_operator_position`](Self::live_operator_position) and
+    /// [`fixed_operator_position`](Self::fixed_operator_position), which each
+    /// return a position only when the transmitter tagged it that way.
     pub fn operator_position(&self) -> Option<(f64, f64)> {
         if self.operator_latitude == 0.0 && self.operator_longitude == 0.0 {
             None
         } else {
             Some((self.operator_latitude, self.operator_longitude))
+        }
+    }
+
+    /// The takeoff / home point: where the aircraft launched from.
+    ///
+    /// Returns a position only when the System message tags its operator
+    /// position as the takeoff location
+    /// ([`OperatorLocationType::Takeoff`]), which is the common case for a
+    /// ground control station that stays at the launch point. `None` for a
+    /// live or fixed operator position, or when the position is unset (0, 0).
+    ///
+    /// This answers a question the pilot position cannot: an operator who
+    /// needs to find the launch site, not the aircraft, reads it here.
+    pub fn takeoff_position(&self) -> Option<(f64, f64)> {
+        if self.operator_location_type == OperatorLocationType::Takeoff {
+            self.operator_position()
+        } else {
+            None
+        }
+    }
+
+    /// The operator's live GNSS position: where the pilot is right now.
+    ///
+    /// Returns a position only when the System message tags its operator
+    /// position as a live fix ([`OperatorLocationType::LiveGnss`]), the case
+    /// for a controller that reports its own moving GNSS position. `None`
+    /// otherwise.
+    pub fn live_operator_position(&self) -> Option<(f64, f64)> {
+        if self.operator_location_type == OperatorLocationType::LiveGnss {
+            self.operator_position()
+        } else {
+            None
+        }
+    }
+
+    /// The operator's fixed, declared ground position.
+    ///
+    /// Returns a position only when the System message tags its operator
+    /// position as fixed ([`OperatorLocationType::Fixed`]). `None` otherwise.
+    pub fn fixed_operator_position(&self) -> Option<(f64, f64)> {
+        if self.operator_location_type == OperatorLocationType::Fixed {
+            self.operator_position()
+        } else {
+            None
         }
     }
 
@@ -1217,5 +1268,16 @@ impl OperatorId {
     /// The operator ID, if it is printable ASCII.
     pub fn operator_id_str(&self) -> Option<&str> {
         padded_str(&self.operator_id)
+    }
+
+    /// Resolves the operator ID into a displayable identity: the registering
+    /// country (from the EN 4709-002 ISO 3166-1 alpha-3 prefix) and the clean
+    /// registration body. `None` when the field is not printable ASCII.
+    ///
+    /// See [`crate::operator::OperatorIdentity`] for what it does and does not
+    /// claim (it reads the bytes; it does not prove the registration genuine).
+    pub fn identity(&self) -> Option<crate::operator::OperatorIdentity<'_>> {
+        self.operator_id_str()
+            .map(crate::operator::OperatorIdentity::parse)
     }
 }

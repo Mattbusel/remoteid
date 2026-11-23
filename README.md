@@ -139,7 +139,7 @@ Live: [mattbusel.github.io/drone-demos/bits/f3411-basic-id](https://mattbusel.gi
 
 ```toml
 [dependencies]
-remoteid = "0.3"
+remoteid = "0.4"
 ```
 
 Bluetooth (for example service data from `btleplug` for UUID `0xFFFA`):
@@ -200,6 +200,50 @@ Wifi([132, 204, 168, 96, 67, 36])
   speed:     Some(20.5) m/s, track Some(280.0) deg
   operator position: Some((45.5443876, -122.9726866))
   frames:    21 received, 2 est. missed, 0 duplicates, 0 undecodable
+```
+
+## Three questions an operator actually asks
+
+Decoding gives you fields. Standing next to a fence, a counter-UAS or security
+operator needs answers. From the frames this crate already decodes:
+
+* **Where did it launch from?** The System message tags its operator position
+  as the takeoff point, a live pilot fix, or a fixed station.
+  `System::takeoff_position` (or `UasData::takeoff_position`) returns the
+  launch point *only* when the tag says takeoff, so you can send someone to the
+  launch site rather than chasing the aircraft. `pilot_position` is the live
+  operator fix, kept separate and never a guess.
+* **Who is flying it?** `UasData::operator_identity` resolves the Operator ID
+  registration string into the registering country and the clean registration
+  body, from the EN 4709-002 ISO 3166-1 alpha-3 prefix: `FIN...` reads as
+  Finland, `GBR...` as the United Kingdom. An unknown prefix is left whole; it
+  never claims the registration is real (that is what `trust` is for).
+* **Where is it heading?** `TrackedUas::heading_deg` and `Trajectory` build a
+  ground-track heading from consecutive Location fixes, and `trend_to` says
+  whether the drone is `Closing` on or `Opening` from a point you care about.
+  A hovering or static emitter gives `None`, not a heading invented from GNSS
+  jitter.
+
+```rust
+use remoteid::{RangeTrend, TrackedUas};
+
+// A fence, a crowd, a runway threshold: the point you are protecting.
+fn brief(uas: &TrackedUas, guard_lat: f64, guard_lon: f64) {
+    if let Some((lat, lon)) = uas.data.takeoff_position() {
+        println!("launched from {lat:.5}, {lon:.5}");
+    }
+    if let Some(id) = uas.data.operator_identity() {
+        println!("operator: {} ({})", id.registration, id.country.unwrap_or("unknown country"));
+    }
+    if let Some(hdg) = uas.heading_deg() {
+        println!("heading {hdg:.0} deg");
+    }
+    match uas.trajectory.trend_to(guard_lat, guard_lon, 5.0) {
+        Some(RangeTrend::Closing) => println!("CLOSING on the guarded point"),
+        Some(RangeTrend::Opening) => println!("moving away"),
+        _ => {}
+    }
+}
 ```
 
 ## What you get

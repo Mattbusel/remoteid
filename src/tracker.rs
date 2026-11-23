@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::track::Trajectory;
 use crate::trust::{Assessment, Observation, Reason, TrustConfig, TrustState};
 use crate::wifi::{WifiKind, WifiRemoteId};
 use crate::{ble::BleRemoteId, geo, Frame, MessageType, Transmitter, Transport, UasData};
@@ -60,6 +61,8 @@ pub struct TrackedUas {
     pub rssi_dbm: Option<i8>,
     /// Transport of the latest frame.
     pub transport: Transport,
+    /// Heading and range trend built from this aircraft's consecutive fixes.
+    pub trajectory: Trajectory,
     last_counter: [Option<u8>; 8],
     last_fix: Option<(u64, f64, f64, f64)>,
     /// The identity this entry is filed under in the tracker's index.
@@ -82,6 +85,14 @@ impl TrackedUas {
     /// position.
     pub fn last_fix(&self) -> Option<(u64, f64, f64, f64)> {
         self.last_fix
+    }
+
+    /// The aircraft's heading in degrees (0 = true north, clockwise), derived
+    /// from its last two distinct fixes, or `None` while it has not moved far
+    /// enough for a heading to be real. Shorthand for
+    /// [`self.trajectory.heading_deg()`](Trajectory::heading_deg).
+    pub fn heading_deg(&self) -> Option<f64> {
+        self.trajectory.heading_deg()
     }
 }
 
@@ -336,6 +347,7 @@ impl Tracker {
                         .meters()
                         .map_or(cfg.default_accuracy_m, |v| v as f64);
                     entry.last_fix = Some((now, lat, lon, hacc));
+                    entry.trajectory.update(lat, lon);
                     new_fix = true;
                 }
             }

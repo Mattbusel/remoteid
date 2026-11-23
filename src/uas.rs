@@ -1,5 +1,6 @@
 //! The merged state of one aircraft.
 
+use crate::operator::OperatorIdentity;
 use crate::{Auth, BasicId, Frame, IdType, Location, Message, OperatorId, SelfId, System};
 
 /// Basic ID slots kept per aircraft (the reference library keeps 2: for
@@ -88,6 +89,27 @@ impl UasData {
             .iter()
             .flatten()
             .find_map(|b| b.uas_id_str().filter(|s| !s.is_empty()))
+    }
+
+    /// Where the aircraft launched from, when the System message reports its
+    /// operator position as the takeoff point. See
+    /// [`System::takeoff_position`].
+    pub fn takeoff_position(&self) -> Option<(f64, f64)> {
+        self.system.as_ref()?.takeoff_position()
+    }
+
+    /// The operator's live position (where the pilot is now), when the System
+    /// message reports a live GNSS operator position. See
+    /// [`System::live_operator_position`].
+    pub fn pilot_position(&self) -> Option<(f64, f64)> {
+        self.system.as_ref()?.live_operator_position()
+    }
+
+    /// The operator identity resolved from the Operator ID message: the
+    /// registering country and the clean registration string. See
+    /// [`OperatorId::identity`].
+    pub fn operator_identity(&self) -> Option<OperatorIdentity<'_>> {
+        self.operator_id.as_ref()?.identity()
     }
 
     /// Joins the authentication pages into `out` once page 0 and every page

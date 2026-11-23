@@ -66,6 +66,14 @@
 //! signatures. The verdict is advice for a detector, not a filter: nothing
 //! is dropped.
 //!
+//! # Operator readouts
+//!
+//! Decoding gives fields; an operator needs answers. [`System::takeoff_position`]
+//! surfaces where a drone launched from, apart from where the pilot is now;
+//! [`operator`] resolves the Operator ID into the registering country and a
+//! clean registration string; and [`track`] turns consecutive Location fixes
+//! into a heading and a closing/opening trend toward a point you are guarding.
+//!
 //! [`ridf`] defines RIDF v0, a small record format for raw frames with
 //! receiver time, signal strength and receiver position, and
 //! [`aircraft_json`] writes `aircraft.json` in the readsb schema so tar1090
@@ -89,10 +97,12 @@ mod error;
 pub mod france;
 pub mod geo;
 mod message;
+pub mod operator;
 mod pack;
 #[cfg(feature = "std")]
 pub mod replay;
 pub mod ridf;
+pub mod track;
 #[cfg(feature = "std")]
 mod tracker;
 pub mod trust;
@@ -101,7 +111,9 @@ pub mod wifi;
 
 pub use error::Error;
 pub use message::*;
+pub use operator::OperatorIdentity;
 pub use pack::{MessagePack, MessagePackBuilder, PACK_MAX_MESSAGES};
+pub use track::{RangeTrend, Trajectory};
 #[cfg(feature = "std")]
 pub use tracker::{CounterStats, TrackedUas, Tracker, TrackerConfig};
 pub use trust::{Assessment, Observation, Reason, TrustConfig, TrustState, Verdict};

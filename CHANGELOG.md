@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.4.0
+
+**Why:** a decoded drone is not yet an answer. A security operator standing at
+a fence needs three plain facts the raw fields do not spell out on their own:
+*where did it launch from*, *who registered it*, and *which way is it going*.
+This release turns the bytes the crate already decodes into those three
+readouts. Additive; no API change.
+
+* **Where it launched from.** The System message carries the operator
+  position with a tag for what that position is. New `System::takeoff_position`
+  returns it only when the tag is `Takeoff`, i.e. the point the drone lifted
+  off from, so an operator can go to the launch site instead of the aircraft.
+  `System::live_operator_position` and `System::fixed_operator_position` return
+  the position only for a live pilot fix or a fixed station, each one `None`
+  unless the transmitter said so, never a guess. `UasData::takeoff_position`
+  and `UasData::pilot_position` are the shortcuts.
+* **Who is flying it.** New `operator` module and `OperatorIdentity` resolve
+  the Operator ID registration string into a displayable identity: the
+  registering country, read from the EN 4709-002 ISO 3166-1 alpha-3 prefix
+  (`FIN...` -> Finland, `GBR...` -> United Kingdom), and the clean registration
+  body. `OperatorId::identity` and `UasData::operator_identity` return it;
+  `operator::country_name` is the bare code-to-name lookup over all 249
+  officially assigned codes. It reports only what the bytes say: an unknown
+  prefix is left whole, and it never claims the registration is genuine (use
+  `trust` for the spoof verdict).
+* **Where it is heading.** New `track` module and `Trajectory` build a heading
+  and range trend from consecutive Location fixes. `Trajectory::heading_deg`
+  gives the ground track bearing, but only once the aircraft has moved more
+  than `MIN_MOVE_M` (3 m), so a hovering or static emitter yields `None`
+  rather than a heading made of GNSS noise. `range_to_m`, `bearing_to` and
+  `trend_to` answer, for any target point (the fence, the crowd, the runway),
+  how far and which way the drone is and whether it is `Closing` or `Opening`
+  (`RangeTrend`). The std `Tracker` keeps a `Trajectory` per aircraft and
+  exposes `TrackedUas::heading_deg`.
+* All three stay `no_std` and allocate nothing.
+* Tests: the launch point, operator country (United Kingdom) and the real
+  flight's heading (about 338 degrees over 277 m of ground track, opening from
+  its launch point) are checked against the public Open Drone ID Wi-Fi beacon
+  capture; the EN 4709-002 country prefix against the reference operator ID
+  vector (Finland).
+* The GitHub Action, `remoteid-replay` and the Python package are unchanged
+  and stay at their previous versions.
+
 ## 0.3.3
 
 **Why:** a Remote ID only receiver misses DJI's own DroneID, which carries
